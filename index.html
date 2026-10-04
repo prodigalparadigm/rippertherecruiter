@@ -1,0 +1,1436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ripper the Recruiter</title>
+<meta name="description" content="Ripper listens to your screening call and hands you the next three questions. A free tool for everyone in the hiring conversation.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Jost:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    --paper: #EAE9E3;
+    --ink: #2A2D2E;
+    --red: #A01E39;
+    --pencil: #898E8C;
+    --rule: #C6C8C1;
+  }
+  html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #1D1F20; --ink: #E4E6E2; --red: #E08A9B;
+      --pencil: #8E938F; --rule: #43474A;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #1D1F20; --ink: #E4E6E2; --red: #E08A9B;
+    --pencil: #8E938F; --rule: #43474A;
+  }
+  * { box-sizing: inherit; }
+  [hidden] { display: none !important; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: 'Jost', Verdana, 'Helvetica Neue', Arial, sans-serif;
+    font-size: 17.5px;
+    line-height: 1.55;
+  }
+  /* ---------- above the fold ---------- */
+  .hero {
+    position: relative;
+    height: calc(100svh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+  @supports not (height: 100svh) {
+    .hero { height: calc(100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); }
+  }
+  /* the plate: EXACT artwork bounds in both dimensions, so nothing escapes it */
+  .plate-wrap {
+    position: relative;
+    width:  min(100vw, calc((100svh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)) * 1.3333));
+    height: min(calc(100svh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)), calc(100vw * 0.75));
+    container-type: size;
+  }
+  @supports not (height: 100svh) {
+    .plate-wrap {
+      width:  min(100vw, calc((100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)) * 1.3333));
+      height: min(calc(100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)), calc(100vw * 0.75));
+    }
+  }
+  .hero-img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0.75;
+  }
+  .wm-col {
+    position: absolute;
+    left: 8px;
+    top: 8px;
+    bottom: 8px;
+    z-index: 2;
+    display: flex;
+  }
+  .wordmark {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    align-items: center;
+    height: 100%;
+  }
+  .wm-row {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .wm-row .ltr {
+    font-size: clamp(30px, 9.5cqh, 96px);
+    font-weight: 500;
+    line-height: 1;
+    color: var(--red);
+  }
+  .wm-row.lead .ltr { font-size: clamp(42px, 14cqh, 134px); }
+  .wm-row:not(.lead) { transform: translateX(clamp(-14px, -1.5cqh, -8px)); }
+  .wm-row:focus-visible { outline: 2.5px solid var(--red); outline-offset: 4px; }
+  .wm-word {
+    position: absolute;
+    left: calc(100% + 16px);
+    top: 50%;
+    transform: translateY(-50%) translateX(-8px);
+    white-space: nowrap;
+    font-size: clamp(16px, 2.8cqh, 24px);
+    color: var(--red);
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    padding: 4px 16px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 160ms ease, transform 160ms ease;
+    z-index: 3;
+  }
+  @media (hover: hover) {
+    .wm-row:hover .wm-word { opacity: 1; transform: translateY(-50%) translateX(0); }
+  }
+  .wm-row:focus-visible .wm-word,
+  .wm-row.open .wm-word { opacity: 1; transform: translateY(-50%) translateX(0); }
+  @media (prefers-reduced-motion: reduce) {
+    .wm-word { transition: none; }
+  }
+  .wm-hint {
+    position: absolute;
+    right: 3%;
+    top: 2.5%;
+    margin: 0;
+    font-style: italic;
+    font-size: 14px;
+    color: var(--pencil);
+    z-index: 2;
+  }
+  /* ---------- below the fold ---------- */
+  .sheet {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 8px 28px 40px;
+  }
+  .pitch {
+    margin: 52px auto 0;
+    max-width: 640px;
+    text-align: center;
+  }
+  .pitch p.lede {
+    font-size: 25px;
+    line-height: 1.4;
+    margin: 0 0 10px;
+  }
+  .pitch p.sub {
+    color: var(--pencil);
+    font-style: italic;
+    margin: 0 0 26px;
+    font-size: 17px;
+  }
+  .open-btn {
+    display: inline-block;
+    font-family: inherit;
+    font-size: 19px;
+    color: var(--paper);
+    background: var(--ink);
+    border: 1.5px solid var(--ink);
+    padding: 12px 34px;
+    cursor: pointer;
+    text-decoration: none;
+  }
+  .open-btn:hover { background: var(--red); border-color: var(--red); color: #EAE9E3; }
+  .open-btn:focus-visible { outline: 3px solid var(--red); outline-offset: 3px; }
+  .hatching {
+    display: block;
+    margin-top: 10px;
+    font-style: italic;
+    color: var(--pencil);
+    font-size: 15px;
+  }
+  footer {
+    margin-top: 72px;
+    padding-top: 18px;
+    border-top: 1px solid var(--rule);
+    color: var(--pencil);
+    font-size: 15.5px;
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  footer .fine { font-style: italic; }
+  @media (max-width: 640px) {
+    .sheet { padding: 8px 18px 32px; }
+    .pitch { margin-top: 40px; text-align: left; }
+  }
+
+  /* ---------- the tool ---------- */
+  .tool { margin-top: 24px; }
+  .panel { border-top: 1px solid var(--rule); padding-top: 26px; margin-top: 34px; }
+  .panel h2 { font-size: 24px; font-weight: 500; margin: 0 0 18px; }
+  .panel h3 { font-size: 17px; font-weight: 500; margin: 26px 0 10px; color: var(--ink); }
+  .arealabel { display: block; font-size: 15px; color: var(--pencil); margin: 18px 0 6px; }
+  textarea {
+    width: 100%; font: inherit; font-size: 15px; line-height: 1.5;
+    color: var(--ink); background: var(--paper);
+    border: 1px solid var(--rule); padding: 12px; resize: vertical;
+  }
+  textarea::placeholder, input::placeholder { color: var(--pencil); opacity: .85; }
+  .drawer { border: 1px solid var(--rule); padding: 0; margin: 0 0 6px; }
+  .drawer summary {
+    cursor: pointer; padding: 12px 14px; font-size: 15px; color: var(--ink);
+    list-style: none; display: flex; justify-content: space-between;
+  }
+  .drawer summary::-webkit-details-marker { display: none; }
+  .drawer summary::after { content: "open"; font-size: 13px; color: var(--pencil); }
+  .drawer[open] summary::after { content: "close"; }
+  .drawer-body { padding: 0 14px 14px; }
+  .keyrow { display: flex; gap: 8px; margin-bottom: 8px; }
+  .keyrow select, .keyrow input {
+    font: inherit; font-size: 15px; color: var(--ink); background: var(--paper);
+    border: 1px solid var(--rule); padding: 9px 10px;
+  }
+  .keyrow select { flex: none; }
+  .keyrow input { flex: 1; min-width: 0; }
+  .mlabel { font-size: 14px; color: var(--pencil); align-self: center; flex: none; }
+  .fine { margin: 6px 0 0; font-size: 13.5px; color: var(--pencil); line-height: 1.5; }
+  .gobar, .livebar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 18px; }
+  .livebar { margin-top: 0; margin-bottom: 8px; }
+  .tool button {
+    font: inherit; font-size: 16px; cursor: pointer;
+    background: var(--ink); color: var(--paper);
+    border: 1.5px solid var(--ink); padding: 10px 22px;
+  }
+  .tool button:hover { background: var(--red); border-color: var(--red); color: #EAE9E3; }
+  .tool button.quiet { background: transparent; color: var(--ink); border-color: var(--rule); }
+  .tool button.quiet:hover { background: transparent; color: var(--red); border-color: var(--red); }
+  .tool button:disabled { opacity: .45; cursor: default; }
+  .tool button:focus-visible, .tool textarea:focus-visible, .tool input:focus-visible, .tool select:focus-visible {
+    outline: 2.5px solid var(--red); outline-offset: 2px;
+  }
+  .status { display: flex; align-items: center; gap: 8px; color: var(--pencil); font-size: 14.5px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--rule); flex: none; }
+  .dot.live { background: var(--red); animation: pulse 1.6s infinite; }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(160, 30, 57, .5); }
+    100% { box-shadow: 0 0 0 9px rgba(160, 30, 57, 0); }
+  }
+  @media (prefers-reduced-motion: reduce) { .dot.live { animation: none; } }
+  .status.err { color: var(--red); }
+  .questions { display: flex; flex-direction: column; gap: 10px; margin: 4px 0 8px; }
+  .q {
+    background: none; border: 1px solid var(--rule); border-left: 3px solid var(--ink);
+    padding: 14px 16px 12px; cursor: pointer; text-align: left; width: 100%;
+    color: var(--ink); font-size: 17px; line-height: 1.35; font-weight: 400;
+  }
+  .tool button.q:hover { background: var(--paper); color: var(--ink); border-color: var(--rule); border-left-color: var(--red); }
+  .q small { display: block; font-size: 13px; color: var(--pencil); margin-top: 8px; font-weight: 400; }
+  .q .kind { color: var(--red); font-size: 13px; display: block; margin-bottom: 4px; }
+  .q.followup { border-left-color: var(--red); }
+  .q.was-asked { opacity: .45; cursor: default; text-decoration: line-through; text-decoration-color: var(--rule); }
+  .walkrow { border: 1px solid var(--rule); padding: 14px 16px; margin-bottom: 10px; }
+  .walkrow .req { font-size: 16px; margin: 0 0 2px; }
+  .walkrow .meta { font-size: 13.5px; color: var(--pencil); margin: 0 0 10px; }
+  .walkrow .meta .fit { font-style: normal; }
+  .fit.strong { color: var(--ink); }
+  .fit.partial { color: var(--pencil); }
+  .fit.transferable { color: var(--red); }
+  .fit.gap { color: var(--pencil); font-style: italic; }
+  .asked { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+  .asked li { border-left: 3px solid var(--rule); padding: 6px 12px; font-size: 14.5px; }
+  .asked li .aq { color: var(--pencil); text-decoration: line-through; text-decoration-color: var(--rule); }
+  .asked li .note { display: block; margin-top: 4px; color: var(--ink); font-size: 14px; }
+  .asked li .note::before { content: "note "; color: var(--red); font-size: 12.5px; }
+  .transcript {
+    background: var(--paper); border: 1px solid var(--rule); padding: 12px 14px;
+    font-size: 14px; line-height: 1.55; max-height: 220px; overflow: auto;
+    white-space: pre-wrap; color: var(--pencil); margin-top: 10px;
+  }
+  .transcript .interim { opacity: .6; }
+  .addline { display: flex; gap: 8px; margin-top: 10px; }
+  .addline input {
+    flex: 1; font: inherit; font-size: 14px; padding: 9px 12px;
+    border: 1px solid var(--rule); background: var(--paper); color: var(--ink);
+  }
+  @media (max-width: 640px) {
+    .keyrow { flex-wrap: wrap; }
+    .keyrow select { flex: 1; }
+  }
+
+
+  /* ---------- mode toggle ---------- */
+  .modes { display: flex; gap: 0; margin: 0 0 4px; border: 1px solid var(--rule); width: fit-content; }
+  .modes button { background: transparent; color: var(--pencil); border: 0; padding: 10px 20px; font-size: 15.5px; }
+  .modes button:hover { background: transparent; color: var(--red); border: 0; }
+  .modes button.on { background: var(--ink); color: var(--paper); }
+  .modes button.on:hover { background: var(--ink); color: var(--paper); }
+  /* ---------- practice stage ---------- */
+  .stage { border: 1px solid var(--rule); border-left: 3px solid var(--red); padding: 22px 24px; margin: 14px 0 12px; }
+  .stage .asking { font-size: 14px; color: var(--pencil); margin: 0 0 8px; }
+  .stage .bigq { font-size: 22px; line-height: 1.35; margin: 0; }
+  .stage .coachnote { margin: 14px 0 0; padding-top: 12px; border-top: 1px solid var(--rule); font-size: 15px; color: var(--ink); }
+  .stage .coachnote::before { content: "Ripper's note  "; color: var(--red); font-size: 13px; }
+  .voicerow { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--pencil); }
+  .voicerow input { accent-color: var(--red); }
+  /* ---------- content pages ---------- */
+  .page { border-top: 1px solid var(--rule); padding-top: 26px; margin-top: 44px; }
+  .page h2 { font-size: 24px; font-weight: 500; margin: 0 0 14px; }
+  .page p { max-width: 62ch; margin: 0 0 14px; }
+  .page .quiet-note { color: var(--pencil); font-size: 15px; font-style: italic; }
+  .page a.door {
+    display: inline-block; font-size: 17px; color: var(--paper); background: var(--ink);
+    border: 1.5px solid var(--ink); padding: 10px 24px; text-decoration: none; margin-top: 6px;
+  }
+  .page a.door:hover { background: var(--red); border-color: var(--red); }
+  .page a.door:focus-visible { outline: 2.5px solid var(--red); outline-offset: 2px; }
+  .duckroom { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 28px; align-items: start; }
+  .duckroom img { width: 100%; height: auto; border: 1px solid var(--rule); }
+  .duckroom figcaption { font-size: 13.5px; color: var(--pencil); font-style: italic; margin-top: 8px; }
+  @media (max-width: 720px) { .duckroom { grid-template-columns: 1fr; } .duckroom figure { max-width: 340px; } }
+
+
+  /* ---------- stage directions ---------- */
+  .q .lead { display: block; font-style: italic; color: var(--pencil); font-size: 14px; margin-bottom: 6px; }
+  .q .beat { display: block; font-style: italic; color: var(--pencil); font-size: 13px; margin-top: 8px; }
+  .stage .stagebeat { font-style: italic; color: var(--pencil); font-size: 14.5px; margin: 10px 0 0; }
+
+
+  /* ---------- routed views ---------- */
+  .view { display: none; }
+  .view.active { display: block; }
+  .viewintro { color: var(--pencil); font-size: 16px; margin: 0 0 10px; max-width: 62ch; }
+  .crossdoor { font-size: 14.5px; color: var(--pencil); margin: 0 0 24px; }
+  .crossdoor a { color: var(--red); }
+  .doors { display: flex; flex-direction: column; gap: 10px; margin: 26px auto 0; max-width: 560px; }
+  .doors a { color: var(--ink); text-decoration: none; font-size: 16.5px; border: 1px solid var(--rule); padding: 12px 16px; text-align: left; }
+  .doors a b { color: var(--red); font-weight: 500; margin-right: 12px; }
+  .doors a:hover { border-color: var(--red); }
+  .doors a:focus-visible { outline: 2.5px solid var(--red); outline-offset: 2px; }
+
+
+  .about { max-width: 640px; margin: 36px auto 0; }
+  .about p { margin: 0 0 14px; }
+
+
+  .stage .stageprog { font-size: 13px; color: var(--pencil); margin: 0 0 10px; }
+
+
+  /* ---------- paged live flow (recruiter) ---------- */
+  .livecue {
+    position: fixed;
+    top: calc(12px + env(safe-area-inset-top, 0px));
+    left: 14px;
+    display: flex; align-items: center; gap: 8px;
+    font-size: 14px; color: var(--pencil);
+    background: var(--paper); border: 1px solid var(--rule);
+    padding: 6px 12px; z-index: 60;
+  }
+  .linklike {
+    background: none; border: none; color: var(--red);
+    cursor: pointer; font: inherit; font-size: 14px; padding: 0;
+  }
+  .tool button.linklike { background: none; border: none; color: var(--red); padding: 0; font-size: 14px; }
+  .tool button.linklike:hover { background: none; border: none; color: var(--red); text-decoration: underline; }
+  .finebar { font-size: 14px; color: var(--pencil); margin-top: 18px; }
+  .dealnote { margin: 0 0 14px; border-left: 3px solid var(--rule); padding: 6px 12px; font-size: 14.5px; color: var(--ink); }
+  .dealnote::before { content: "note on that answer  "; color: var(--red); font-size: 12.5px; }
+
+</style>
+</head>
+<body>
+
+  <header class="hero">
+    <div class="plate-wrap">
+      <img class="hero-img" src="ripper_ghost_cool.jpg"
+           alt="Faint cool-grey graphite portrait of Ripper, a musk duck, ghosted behind the page like a watermark.">
+      <div class="wm-col">
+        <div class="wordmark" aria-label="Ripper - each letter names who the tool is for">
+          <button class="wm-row lead" aria-label="R - Recruiters"><span class="ltr">R</span><span class="wm-word" aria-hidden="true">Recruiters</span></button>
+          <button class="wm-row" aria-label="I - Individual applicants"><span class="ltr">I</span><span class="wm-word" aria-hidden="true">Individual applicants</span></button>
+          <button class="wm-row" aria-label="P - People who can help"><span class="ltr">P</span><span class="wm-word" aria-hidden="true">People who can help</span></button>
+          <button class="wm-row" aria-label="P - Panels"><span class="ltr">P</span><span class="wm-word" aria-hidden="true">Panels</span></button>
+          <button class="wm-row" aria-label="E - Employers"><span class="ltr">E</span><span class="wm-word" aria-hidden="true">Employers</span></button>
+          <button class="wm-row" aria-label="R - Ripper himself"><span class="ltr">R</span><span class="wm-word" aria-hidden="true">Ripper himself</span></button>
+        </div>
+      </div>
+      <p class="wm-hint">hover reads the letters; tap opens their door</p>
+    </div>
+  </header>
+
+  <div class="livecue" id="liveCue" role="status" hidden><span class="dot live" id="cueDot"></span><span id="cueText">listening</span></div>
+  <div class="sheet">
+    <section id="home" class="view">
+      <section class="pitch">
+        <p class="lede">Ripper listens to your call and hands you the next question.</p>
+      </section>
+      <div class="about">
+        <p>Ripper is a listening companion for the hiring conversation. He sits beside whoever's asking - a recruiter on a screening call, a candidate rehearsing for the real one - and pays the kind of attention people wish they could: never losing the thread, never forgetting what's already been covered, always ready with the question that moves things forward.</p>
+        <p>He's named for a duck who learned to talk by listening, and that's the whole philosophy. Interviews go wrong when nobody is really hearing anybody. Ripper doesn't perform for you and he doesn't script you - he listens with you, and the conversation gets better because someone in the room is doing that job perfectly.</p>
+        <p>He's free to use, built in the Hudson Valley by a human and her Claude, and he keeps nothing - no server, no account, no record but the one you download yourself. Your words do travel, though: your browser's speech service turns them into text, and the text goes to the AI provider you bring a key for, the same way any cloud tool works. Say the true things; just know where they go.</p>
+      </div>
+      <section class="pitch">
+        <p class="sub">Tap a letter above, or pick your door.</p>
+      </section>
+      <nav class="doors" aria-label="Rooms">
+        <a href="#recruiters"><b>R</b>Recruiters - the live-call companion</a>
+        <a href="#practice"><b>I</b>Individual applicants - rehearse with Ripper before the real thing</a>
+        <a href="#people"><b>P</b>People who can help - coaches worth practicing with</a>
+        <a href="#panels"><b>P</b>Panels - a listener for the whole committee</a>
+        <a href="#employers"><b>E</b>Employers - Ripper across your hiring team</a>
+        <a href="#ripper"><b>R</b>Ripper himself - the duck, the story, the why</a>
+      </nav>
+    </section>
+
+    <section id="tool" class="tool view" aria-label="The Ripper tool">
+
+      <div class="panel" id="prepPanel">
+        <h2 id="prepTitle">The recruiter's chair</h2>
+        <p class="viewintro" id="toolIntro">Plan the screen, then let Ripper listen beside you.</p>
+        <p class="crossdoor" id="crossdoor">Practicing for your own interview instead? <a href="#practice">The practice chair</a>.</p>
+        <details class="drawer" id="keyBox" open>
+          <summary>Your API key</summary>
+          <div class="drawer-body">
+            <div class="keyrow">
+              <select id="provider" aria-label="Model provider">
+                <option value="anthropic">Anthropic</option>
+                <option value="openai">OpenAI</option>
+              </select>
+              <input id="apikey" type="password" autocomplete="off" placeholder="paste your key - it lives in this tab and dies with it">
+            </div>
+            <div class="keyrow">
+              <span class="mlabel">model</span>
+              <!-- PINNED model default - read the note on DEFAULT_MODEL in the script before changing this value -->
+              <input id="model" value="claude-sonnet-4-6" aria-label="Model name">
+            </div>
+            <p class="fine">Bring your own key. Calls go straight from this browser to the provider you chose - no server in between, nothing stored anywhere, and the key dies with this tab. Straight talk about the audio: your browser's speech recognition (in Chrome, Google's service) listens to the room and sends the sound out to turn it into text; that text then goes to your provider. Ripper himself keeps none of it.</p>
+          </div>
+        </details>
+
+        <label class="arealabel" for="jd">The role</label>
+        <textarea id="jd" rows="7" placeholder="Paste the job description - or a few honest lines: the title, what they actually need, what would rule someone out."></textarea>
+
+        <label class="arealabel" for="resume">The candidate</label>
+        <textarea id="resume" rows="7" placeholder="Paste the resume, or the LinkedIn text. Ripper reads for matches - and for transferable skills hiding under different words."></textarea>
+
+        <div class="gobar">
+          <button id="go">Start the interview</button>
+          <span class="status" id="prepStatus"><span class="dot" id="prepDot"></span><span id="prepStatusText"></span></span>
+        </div>
+        <p class="fine" id="micNote">Ripper hears whatever this computer's microphone hears. On headphones or AirPods that's you alone - for a real call, let the candidate's voice come through the speakers so he can hear both sides.</p>
+        <p class="fine" id="consentNote">Before the first question, tell the candidate Ripper is listening: an AI is turning the call into text and noting what each answer gave. Ask if that's all right. Some places require everyone's okay before a call is transcribed - and it's the decent way to start either way.</p>
+      </div>
+
+      <div class="panel" id="planPanel" hidden>
+        <p class="finebar" id="planBack" hidden><button class="linklike" id="planBackBtn" type="button">back to the cards</button></p>
+        <h2>The plan</h2>
+        <div class="livebar" id="livebar" hidden>
+          <button id="listen">Start listening</button>
+          <button id="grade" class="quiet" hidden>I'm done - grade me</button>
+          <button id="skip" class="quiet" hidden>Skip</button>
+          <button id="refresh" class="quiet" disabled>Fresh questions</button>
+          <label class="voicerow" id="voiceRow" hidden><input type="checkbox" id="voice" checked> Ripper speaks</label>
+          <span class="status" id="status"><span class="dot" id="dot"></span><span id="statusText">Plan ready. Start when the call does.</span></span>
+        </div>
+        <div class="stage" id="stage" hidden>
+          <p class="stageprog" id="stageProg" hidden></p>
+          <p class="asking" id="stageLead">Ripper asks:</p>
+          <p class="bigq" id="bigq"></p>
+          <p class="stagebeat" id="stageBeat" hidden></p>
+          <p class="coachnote" id="coachnote" hidden></p>
+        </div>
+        <div id="nowWrap" hidden>
+          <h3>Up now</h3>
+          <div class="questions" id="nowQuestions"></div>
+        </div>
+        <div id="planSections"></div>
+        <h3 id="askedHead" hidden>Asked</h3>
+        <ul class="asked" id="asked" aria-label="Questions already asked, with notes on the answers"></ul>
+        <details class="drawer" id="transcriptDrawer" style="margin-top:22px" hidden>
+          <summary>Transcript</summary>
+          <div class="transcript" id="transcript"></div>
+          <div class="addline">
+            <input id="manual" placeholder="Type what was said, if the microphone missed it">
+            <button class="quiet" id="add" type="button">Add</button>
+          </div>
+        </details>
+      </div>
+
+      <div class="panel" id="liveView" hidden>
+        <div id="poolWrap" hidden>
+          <p class="dealnote" id="dealNote" hidden></p>
+          <h2>Ask one of these</h2>
+          <p class="viewintro">Tap the one you serve - the tap is just for the record. Then talk like a person.</p>
+          <div class="questions" id="poolQuestions"></div>
+          <p class="fine" id="poolNote" hidden></p>
+          <p class="finebar">
+            <button class="linklike" id="reroll" type="button">none of these - deal three fresh</button>
+            &nbsp;&middot;&nbsp;
+            <button class="linklike" id="planPeek" type="button">review the full plan</button>
+            &nbsp;&middot;&nbsp;
+            <button class="linklike" id="finish" type="button">finish the interview</button>
+          </p>
+        </div>
+        <div class="stage" id="serveWrap" hidden>
+          <p class="asking" id="serveLead"></p>
+          <p class="bigq" id="serveQ"></p>
+          <p class="stagebeat" id="serveBeat" hidden></p>
+          <div class="gobar">
+            <button id="nextPool" type="button">Next questions</button>
+            <span class="status"><span id="serveStatusText">Listening. When the answer lands, deal the next three.</span></span>
+          </div>
+          <p class="finebar"><button class="linklike" id="finish2" type="button">finish the interview</button></p>
+        </div>
+        <div id="recordWrap" hidden>
+          <h2>The record</h2>
+          <p class="viewintro">Every question served, with Ripper's note on what the answer gave.</p>
+          <ul class="asked" id="recordAsked"></ul>
+          <p class="fine" id="recordNote" hidden></p>
+          <div class="gobar"><button id="downloadRec" type="button">Download the record</button></div>
+        </div>
+      </div>
+
+    </section>
+
+    <section class="page view" id="people" aria-label="People who can help">
+      <h2>People who can help</h2>
+      <p>Practicing with Ripper is good. Practicing with a person who does this for a living is better. This room is for interview coaches, resume writers, and search consultants who help candidates get ready - a short, vouched-for list, not a directory.</p>
+      <p class="quiet-note">The list is being assembled. If you help people practice and want a seat in it, write and say how you work.</p>
+      <a class="door" href="mailto:kathleen@prodigalparadigm.com?subject=People%20who%20can%20help%20-%20Ripper">Ask for a seat</a>
+    </section>
+
+    <section class="page view" id="panels" aria-label="Panels">
+      <h2>Panels</h2>
+      <p>A panel interview is a different animal: several interviewers, one candidate, and the hardest coordination problem in hiring - who asks what, who follows up, and who is actually listening. Ripper can sit with a whole committee: a shared plan, lanes per interviewer, live notes the panel can see.</p>
+      <p>That takes a custom setup, and it's paid work. Tell us about your panel and we'll scope it.</p>
+      <a class="door" href="mailto:kathleen@prodigalparadigm.com?subject=Ripper%20for%20a%20panel">Set up a panel</a>
+    </section>
+
+    <section class="page view" id="employers" aria-label="Employers">
+      <h2>Employers</h2>
+      <p>Rolling Ripper out across a hiring team - your roles, your rubric, your interviewers trained on it - is an engagement, not a download. That's what Prodigal Paradigm does: AI adoption that sticks, built around how your people actually work.</p>
+      <p>Paid, custom, and worth it. Start the conversation.</p>
+      <a class="door" href="mailto:kathleen@prodigalparadigm.com?subject=Ripper%20for%20our%20hiring%20team">Talk to Prodigal Paradigm</a>
+    </section>
+
+    <section class="page view" id="ripper" aria-label="About Ripper">
+      <h2>Ripper himself</h2>
+      <div class="duckroom">
+        <div>
+          <p>Ripper was a musk duck - <em>Biziura lobata</em>, the one with the magnificent lobe under the bill - raised by hand at Tidbinbilla Nature Reserve in Australia. In 1987 a researcher recorded him doing something no duck was supposed to do: imitating human speech and the slam of a door he'd grown up hearing. The recordings surfaced decades later and made him briefly, posthumously famous. He learned to talk the only way anything learns to talk - by listening.</p>
+          <p>That's the whole idea of this tool. Most interview software helps people perform. Ripper sits on the listening side: he helps the person asking the questions actually hear the answers, and helps the person practicing hear themselves. Nothing here feeds anyone a script in a live interview - practice loud, interview honest.</p>
+          <p>He was built in a kitchen-table collaboration between Kathleen Bartin and Fable, her Claude - the first working version in 48 hours, because a recruiter said one sentence on a call: what if something listened and suggested the follow-ups? The duck does the rest.</p>
+        </div>
+        <figure>
+          <img id="duckroomImg" src="" alt="Graphite portrait of Ripper the musk duck, in full field-guide dignity.">
+          <figcaption>Ripper &middot; Biziura lobata &middot; recorded 1987</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <footer>
+      <span>Kathleen Bartin + Fable &middot; Prodigal Paradigm</span>
+      <span class="fine">Named for a duck who learned to talk by listening.</span>
+    </footer>
+  </div>
+
+<script>
+  (function () {
+    var rows = Array.prototype.slice.call(document.querySelectorAll('.wm-row'));
+    var hashes = ["#recruiters", "#practice", "#people", "#panels", "#employers", "#ripper"];
+    rows.forEach(function (row, i) {
+      row.addEventListener('click', function () {
+        if (location.hash === hashes[i]) { if (window.ripperRoute) window.ripperRoute(true); }
+        else location.hash = hashes[i];
+      });
+    });
+  })();
+</script>
+<script>
+(() => {
+  // ---------- state ----------
+  const T = {
+    plan: null,            // {opening:[], background:[], walk:[]}
+    asked: [],             // {question, why, note}
+    now: [],               // live cards {question, why, kind}
+    listening: false,
+    finalText: "",
+    interim: "",
+    lastSent: "",
+    timer: null,
+    busy: false,
+    rec: null,
+  };
+  const $ = id => document.getElementById(id);
+  const el = {
+    provider: $("provider"), apikey: $("apikey"), model: $("model"),
+    jd: $("jd"), resume: $("resume"), go: $("go"),
+    prepDot: $("prepDot"), prepStatus: $("prepStatus"), prepStatusText: $("prepStatusText"),
+    planPanel: $("planPanel"), planSections: $("planSections"),
+    nowWrap: $("nowWrap"), nowQuestions: $("nowQuestions"),
+    listen: $("listen"), refresh: $("refresh"),
+    dot: $("dot"), status: $("status"), statusText: $("statusText"),
+    asked: $("asked"), askedHead: $("askedHead"),
+    transcript: $("transcript"), manual: $("manual"), add: $("add"),
+    keyBox: $("keyBox"),
+    grade: $("grade"), skip: $("skip"), stage: $("stage"), bigq: $("bigq"),
+    coachnote: $("coachnote"), voiceRow: $("voiceRow"), voice: $("voice"),
+    prepTitle: $("prepTitle"), toolIntro: $("toolIntro"), crossdoor: $("crossdoor"),
+    stageLead: $("stageLead"), stageBeat: $("stageBeat"), stageProg: $("stageProg"),
+    prepPanel: $("prepPanel"), livebar: $("livebar"), transcriptDrawer: $("transcriptDrawer"),
+    liveView: $("liveView"), liveCue: $("liveCue"), poolWrap: $("poolWrap"),
+    poolQuestions: $("poolQuestions"), serveWrap: $("serveWrap"), serveLead: $("serveLead"),
+    serveQ: $("serveQ"), serveBeat: $("serveBeat"), serveStatusText: $("serveStatusText"),
+    nextPool: $("nextPool"), reroll: $("reroll"), planPeek: $("planPeek"),
+    finish: $("finish"), finish2: $("finish2"), recordWrap: $("recordWrap"),
+    recordAsked: $("recordAsked"), downloadRec: $("downloadRec"),
+    cueDot: $("cueDot"), cueText: $("cueText"), poolNote: $("poolNote"), recordNote: $("recordNote"),
+    dealNote: $("dealNote"), consentNote: $("consentNote"), planBack: $("planBack"), planBackBtn: $("planBackBtn"),
+  };
+  document.getElementById("duckroomImg").src = document.querySelector(".hero-img").src;
+
+  // ---------- provider ----------
+  // PINNED on purpose - read before changing. claude-sonnet-4-6 runs without thinking when the request
+  // sends no "thinking" field, so this file's small max_tokens budgets hold: plan 3500, notes pass 1400,
+  // deal 700, practice grade 500. claude-sonnet-5-5 and claude-opus-5-5 think by default and the thinking
+  // spends max_tokens, so changing this string alone gets replies cut off at the token limit. Sonnet 5.5
+  // answers {type: "disabled"} with a 400 - it turns thinking off with thinking: {type: "between_tools"}
+  // (only at effort high or below, and with no other thinking fields);
+  // Opus 5.5 can't turn it off at all (lower effort, bigger budgets). Change the request, run it live,
+  // then bump - and keep the <input id="model"> value in step. The OpenAI default has never been run live.
+  const DEFAULT_MODEL = { anthropic: "claude-sonnet-4-6", openai: "gpt-5.1" };
+  el.provider.addEventListener("change", () => { el.model.value = DEFAULT_MODEL[el.provider.value]; });
+
+  async function apiError(label, res) {
+    let detail = "";
+    try { const j = await res.json(); detail = (j.error && j.error.message) || ""; } catch (_) {}
+    const hint = res.status === 401 ? " - check the key" : res.status === 404 ? " - check the model name"
+      : res.status === 429 ? " - rate limited, wait a minute" : res.status === 529 ? " - the provider is overloaded, try again" : "";
+    return label + " " + res.status + (hint || (detail ? " - " + detail.slice(0, 140).replace(/\.$/, "") : ""));
+  }
+
+  async function callModel(system, user, maxTokens) {
+    const key = el.apikey.value.trim();
+    const model = el.model.value.trim() || DEFAULT_MODEL[el.provider.value];
+    if (el.provider.value === "openai") {
+      if (!key) throw new Error("no key - open the key drawer and paste one");
+      const res = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + key },
+        body: JSON.stringify({
+          model, max_completion_tokens: maxTokens,
+          response_format: { type: "json_object" },
+          messages: [{ role: "system", content: system }, { role: "user", content: user }],
+        }),
+      });
+      if (!res.ok) throw new Error(await apiError("OpenAI", res));
+      const data = await res.json();
+      if (data.choices?.[0]?.finish_reason === "length") throw new Error(cutOff(model));
+      return data.choices?.[0]?.message?.content || "";
+    }
+    // anthropic: with a key, direct-browser; without, the claude.ai preview signs the call
+    const headers = { "Content-Type": "application/json" };
+    if (key) {
+      headers["x-api-key"] = key;
+      headers["anthropic-version"] = "2023-06-01";
+      headers["anthropic-dangerous-direct-browser-access"] = "true";
+    }
+    let res;
+    try {
+      res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST", headers,
+        body: JSON.stringify({ model, max_tokens: maxTokens, system, messages: [{ role: "user", content: user }] }),
+      });
+    } catch (err) {
+      // keyless calls are refused at the CORS preflight off claude.ai, so they surface as a network error
+      if (!key) throw new Error("no key - open the key drawer and paste one");
+      throw err;
+    }
+    if (res.status === 401 && !key) throw new Error("no key - open the key drawer and paste one");
+    if (!res.ok) throw new Error(await apiError("API", res));
+    const data = await res.json();
+    if (data.stop_reason === "max_tokens") throw new Error(cutOff(model));
+    return (data.content || []).filter(b => b.type === "text").map(b => b.text).join("\n");
+  }
+
+  function parseJSON(raw) {
+    const clean = raw.replace(/```json|```/g, "").trim();
+    const a = clean.indexOf("{"), b = clean.lastIndexOf("}");
+    if (a === -1 || b === -1) throw new Error("no JSON in reply");
+    return tidyAll(JSON.parse(clean.slice(a, b + 1)));
+  }
+  // every string the model writes gets the house style before anything shows it or saves it
+  function tidyAll(v) {
+    if (typeof v === "string") return tidy(v);
+    if (Array.isArray(v)) return v.map(tidyAll);
+    if (v && typeof v === "object") { const o = {}; for (const k in v) o[k] = tidyAll(v[k]); return o; }
+    return v;
+  }
+
+  function cutOff(model) {
+    const tested = DEFAULT_MODEL.anthropic;
+    return "the reply was cut off at the token limit"
+      + (el.provider.value === "anthropic" && model !== tested ? " - newer models can spend it thinking; try " + tested : "");
+  }
+  // model text as one tidy line in the house style: no line breaks, hyphens not em or en dashes
+  function tidy(s) { return String(s).replace(/[\u2013\u2014]/g, " - ").replace(/\s+/g, " ").trim(); }
+
+  function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+
+  // ---------- mode: interviewing vs practicing ----------
+  const M = { mode: "interview" };
+  const PQ = { list: [], idx: 0, phase: "idle", qStart: 0, ask: 0 };  // practice queue; ask counts each asking
+  function setMode(m) {
+    if (m !== "interview" && m !== "practice") return;
+    if (m === M.mode && (T.listening || L.phase === "pool" || L.phase === "serving")) return;  // never reset a live session from a stray tap, even after the mic dropped
+    if (T.listening) stopListening();
+    M.mode = m;
+    el.prepTitle.textContent = m === "interview" ? "The recruiter's chair" : "The practice chair";
+    el.toolIntro.textContent = m === "interview"
+      ? "Plan the screen, then let Ripper listen beside you."
+      : "Ripper interviews you out loud, notes what each answer gave, and presses where it's thin.";
+    el.crossdoor.innerHTML = m === "interview"
+      ? 'Practicing for your own interview instead? <a href="#practice">The practice chair</a>.'
+      : 'Interviewing someone? <a href="#recruiters">The recruiter\'s chair</a>.';
+    document.querySelector('label[for="resume"]').textContent = m === "interview" ? "The candidate" : "You";
+    el.resume.placeholder = m === "interview"
+      ? "Paste the resume, or the LinkedIn text. Ripper reads for matches - and for transferable skills hiding under different words."
+      : "Paste your own resume. Ripper reads it against the role and interviews you on the gaps.";
+    el.listen.textContent = m === "interview" ? "Start listening" : "Start practicing";
+    el.refresh.hidden = m === "practice";
+    el.voiceRow.hidden = m === "interview";
+    if (m === "interview") { el.stage.hidden = true; el.grade.hidden = true; el.skip.hidden = true; }
+    el.planSections.hidden = m === "practice";
+    el.nowWrap.hidden = true;
+    el.go.textContent = m === "interview" ? "Start the interview" : "Build the interview plan";
+    const micNote = document.getElementById("micNote"); if (micNote) micNote.hidden = m === "practice";
+    el.consentNote.hidden = m === "practice";  // the candidate is the one talking in the practice chair
+    el.livebar.hidden = m === "interview";
+    el.askedHead.hidden = m === "interview" || T.asked.length === 0;
+    el.asked.hidden = m === "interview";
+    el.transcriptDrawer.hidden = m === "interview";
+    el.liveView.hidden = true; el.liveCue.hidden = true; el.planBack.hidden = true;
+    el.prepPanel.hidden = false;
+    el.planPanel.hidden = true;
+    L.phase = "idle";
+    if (T.plan) setStatus(m === "interview" ? "Plan ready. Start when the call does." : "Plan ready. Start when you are - Ripper asks first.", false);
+  }
+  window.ripperSetMode = setMode;
+
+  // Ripper talks through the speakers, so the mic would hear him and grade his own words:
+  // recognition pauses while he talks and comes back when he's done.
+  const V = { gen: 0, timer: null };
+  function hush() {
+    if (T.rec) { try { T.rec.onresult = null; T.rec.onerror = null; T.rec.onend = null; T.rec.abort(); } catch (_) {} T.rec = null; }
+    if (T.interim) { const t = T.interim; T.interim = ""; commit(t); }  // words already heard stay where they were said
+    micDot();
+  }
+  function unhush() {
+    clearTimeout(V.timer); V.timer = null;
+    if (T.listening && M.mode === "practice" && !T.rec) startRec();
+    micDot();
+  }
+  function quiet() {  // retire whatever Ripper is saying or about to say
+    V.gen++; clearTimeout(V.timer); V.timer = null;
+    try { speechSynthesis.cancel(); } catch (_) {}
+  }
+  function micDot() { if (M.mode === "practice") el.dot.classList.toggle("live", T.listening && !!T.rec); }
+  el.voice.addEventListener("change", () => { if (!el.voice.checked) { quiet(); unhush(); } });  // silenced mid-sentence: stop, give the mic back
+  function say(lines) {
+    const gen = ++V.gen;                                   // a newer say() or a stop retires this one
+    const done = () => { if (gen === V.gen) unhush(); };
+    try {
+      speechSynthesis.cancel();
+      hush();
+      clearTimeout(V.timer);
+      // Chrome can drop the end event on long speech: never leave the mic off longer than the words could take
+      V.timer = setTimeout(done, lines.join(" ").split(/\s+/).length * 450 + lines.length * 650 + 3000);
+      let i = 0;
+      const next = () => {
+        if (gen !== V.gen) return;
+        const u = new SpeechSynthesisUtterance(lines[i++]); u.rate = 1;
+        u.onend = () => { if (gen !== V.gen) return; if (i < lines.length) setTimeout(next, 650); else done(); };
+        u.onerror = done;
+        speechSynthesis.speak(u);
+      };
+      next();
+    } catch (_) { done(); }
+  }
+  function speak(text) {
+    if (M.mode !== "practice" || !el.voice.checked) return;
+    say([text]);
+  }
+  function speakStaged(q) {
+    if (M.mode !== "practice" || !el.voice.checked) return;
+    say(q.lead ? [q.lead, q.question] : [q.question]);
+  }
+
+  function buildQueue() {
+    PQ.list = []
+      .concat(T.plan.opening || [], T.plan.background || [],
+        (T.plan.walk || []).map(w => ({ question: w.question, why: w.why })));
+    PQ.idx = 0; PQ.phase = "idle";
+  }
+  function showPracticeQ() {
+    const q = PQ.list[PQ.idx];
+    el.stage.hidden = false;
+    el.coachnote.hidden = true; el.coachnote.textContent = "";
+    if (!q) {
+      el.stageProg.hidden = true;
+      el.stageLead.textContent = "Ripper says:";
+      el.bigq.textContent = "That's the whole plan. Run it again, or rebuild with a sharper resume.";
+      el.stageBeat.hidden = true;
+      el.grade.hidden = true; el.skip.hidden = true;
+      PQ.phase = "done";
+      setStatus("Practice run complete. The graded record is under Asked.", T.listening);
+      return;
+    }
+    el.stageProg.hidden = false;
+    el.stageProg.textContent = "Question " + (PQ.idx + 1) + " of " + PQ.list.length;
+    el.stageLead.textContent = q.lead || "Ripper asks:";
+    el.bigq.textContent = q.question;
+    el.stageBeat.hidden = !q.beat;
+    el.stageBeat.textContent = q.beat ? "(" + q.beat + ")" : "";
+    el.grade.hidden = false; el.grade.textContent = "I'm done - grade me";
+    el.skip.hidden = false;
+    PQ.phase = "answering"; PQ.ask++;
+    if (el.voice.checked) hush();  // he's about to talk: mic off first, so the last answer's tail stays with the last answer
+    else { quiet(); unhush(); }    // voice off: no leftover note over the new question, and the mic stays up
+    PQ.qStart = T.finalText.length;
+    speakStaged(q);
+  }
+  function advancePractice() { PQ.idx += 1; showPracticeQ(); }
+  el.skip.addEventListener("click", () => { if (PQ.phase !== "done") advancePractice(); });
+
+  const PRACTICE_SYSTEM = `You are Ripper, a practice interviewer coaching a candidate out loud between questions. You see the role, the candidate's resume, the question you just asked, and the transcript of their spoken answer.
+
+Two jobs:
+1. NOTE: one or two lines on the answer as evidence, spoken to "you". What it gave, what it didn't. Register: "you gave the team's result - claim your part with a number", "good name-drop of the tool, but what did you build with it", "you answered a different question". Honest, specific, never cruel, never a score.
+2. DECIDE: if the answer was vague, evidence-free, or dodged, write ONE follow-up question to press it. If the answer did its job, no follow-up.
+
+A follow-up may carry "lead" - one spoken bridge that acknowledges their answer before pressing ("Okay - you mentioned the rollout took a quarter...") - and "beat" - a delivery note ("then wait").
+
+Return ONLY JSON, no prose, no code fences:
+{"note":"...","followup":{"question":"...","why":"...","lead":"...","beat":"..."}} or {"note":"...","followup":null}`;
+
+  async function gradePractice() {
+    if (PQ.phase !== "answering") { if (PQ.phase === "noted") advancePractice(); return; }
+    const q = PQ.list[PQ.idx];
+    const answer = (T.finalText.slice(PQ.qStart) + " " + T.interim).trim();  // words still being recognized count
+    if (!answer) { setStatus("Say your answer first - or Skip.", T.listening, true); return; }
+    T.busy = true; el.grade.disabled = true; el.skip.disabled = true;
+    const asking = PQ.ask;
+    const askedRef = T.asked, same = () => T.asked === askedRef && M.mode === "practice";  // still this practice run?
+    setStatus("Ripper is thinking about that answer\u2026", T.listening);
+    const user =
+`THE ROLE:
+${el.jd.value.trim().slice(0, 2500)}
+
+THE CANDIDATE'S RESUME:
+${el.resume.value.trim().slice(0, 2500)}
+
+QUESTION ASKED:
+${q.question}
+
+THEIR SPOKEN ANSWER:
+${answer.slice(0, 3000)}`;
+    try {
+      const raw = await callModel(PRACTICE_SYSTEM, user, 500);
+      const parsed = parseJSON(raw);
+      if (!same()) return;  // the recruiter chair took over while this was grading
+      const note = (typeof parsed.note === "string" && tidy(parsed.note)) || "noted.";
+      if (PQ.ask !== asking || PQ.phase !== "answering") {  // asked again meanwhile: keep the note, don't talk over the new answer
+        T.asked.push({ question: q.question, why: q.why || "", note }); renderAsked(); return;
+      }
+      el.coachnote.textContent = note; el.coachnote.hidden = false;
+      T.asked.push({ question: q.question, why: q.why || "", note });
+      renderAsked();
+      speak(note);
+      if (parsed.followup && parsed.followup.question) {
+        PQ.list.splice(PQ.idx + 1, 0, parsed.followup);
+      }
+      PQ.phase = "noted";
+      el.grade.textContent = "Next question";
+      setStatus("Note's in. Next when you're ready.", T.listening);
+    } catch (err) {
+      if (same()) setStatus("Couldn't grade that one (" + err.message + "). Try again or Skip.", T.listening, true);
+    } finally {
+      if (T.asked === askedRef) T.busy = false;  // a new interview's plan build already reset it
+      el.grade.disabled = false; el.skip.disabled = false;
+    }
+  }
+  el.grade.addEventListener("click", gradePractice);
+
+  // ---------- status ----------
+  function setPrep(text, live = false, err = false) {
+    el.prepStatusText.textContent = text;
+    el.prepDot.classList.toggle("live", live);
+    el.prepStatus.classList.toggle("err", err);
+  }
+  function setStatus(text, live = T.listening, err = false) {
+    el.statusText.textContent = text;
+    el.dot.classList.toggle("live", live && !(M.mode === "practice" && !T.rec));  // in practice the dot is the mic
+    el.status.classList.toggle("err", err);
+  }
+
+  // ---------- prep: build the plan ----------
+  const PREP_SYSTEM = `You prepare a recruiter for a screening call. You get the role and the candidate's resume. Build the interview plan.
+
+Shape of the plan:
+1. "opening" - 2 or 3 questions that open the call like a human: small talk with a purpose, drawn from something real on the resume (a place, a project, an interest, an unusual turn in the history). Establish connection, get a feel for the person. Never generic.
+2. "background" - 2 or 3 questions that walk the work history: why the moves, what they were actually responsible for, what they're looking for now.
+3. "walk" - the role, requirement by requirement. Distill the job description into its 5 to 9 real requirements (what would actually rule someone in or out - not every bullet). For each: judge the resume's fit as one of "strong" (clear direct evidence), "partial" (some evidence, thin), "transferable" (no direct match, but a different experience exercises the same muscle - name the bridge), or "gap" (nothing on the page). Quote the shortest honest evidence clause from the resume, or write "not on the page". Then write the one question that tests it - evidence-seeking: numbers, names, what they personally did, what broke.
+
+Rules: every question is one sentence a person can read mid-call. A "transferable" judgment must say what transfers in its why. Do not flatter the candidate or pad the plan.
+
+Stage directions: this plan will be performed as a conversation, not read as a list. For any question that needs it, add "lead" - one natural bridge sentence to say out loud before the question ("I saw the move from St. Louis to New York on your resume...") - and "beat" - a short direction for after it ("pause - let them fill the silence", "don't rescue them", "if they laugh, let it run"). Write them like a producer's margin notes: human, sparing, specific. Opening questions almost always deserve a lead. A question that stands alone gets neither - empty string.
+
+Return ONLY JSON, no prose, no code fences:
+{"opening":[{"question":"...","why":"...","lead":"...","beat":"..."}],"background":[{"question":"...","why":"...","lead":"...","beat":"..."}],"walk":[{"requirement":"...","fit":"strong|partial|transferable|gap","evidence":"...","question":"...","why":"...","lead":"...","beat":"..."}]}`;
+
+  async function buildPlan() {
+    const jd = el.jd.value.trim(), resume = el.resume.value.trim();
+    if (!jd) { setPrep("Paste the role first.", false, true); el.jd.focus(); return; }
+    if (!resume) { setPrep("Paste the candidate's resume.", false, true); el.resume.focus(); return; }
+    T.busy = true; el.go.disabled = true;
+    setPrep("Reading the role against the resume\u2026", true);
+    const user = `THE ROLE:\n${jd.slice(0, 6000)}\n\nTHE CANDIDATE'S RESUME:\n${resume.slice(0, 6000)}`;
+    try {
+      const raw = await callModel(PREP_SYSTEM, user, 3500);
+      const plan = parseJSON(raw);
+      if (!plan.walk || !plan.walk.length) throw new Error("empty plan");
+      T.plan = plan;
+      T.asked = []; T.now = []; T.lastSent = ""; renderAsked(); renderNow();
+      T.finalText = ""; T.interim = ""; renderTranscript();  // a new plan is a new session - never carry the last candidate's words
+      renderPlan();
+      el.keyBox.open = false;
+      el.stage.hidden = true; el.grade.hidden = true; el.skip.hidden = true;
+      if (M.mode === "practice") {
+        buildQueue();
+        el.planPanel.hidden = false;
+        setPrep("Plan built. It's below.", false);
+        setStatus("Plan ready. Start when you are - Ripper asks first.", false);
+        el.planPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+      } else {
+        setPrep("Plan built. Dealing your first questions.", false);
+        startInterviewLive();
+      }
+    } catch (err) {
+      setPrep("Couldn't build the plan (" + err.message + ").", false, true);
+    } finally {
+      T.busy = false; el.go.disabled = false;
+    }
+  }
+  el.go.addEventListener("click", buildPlan);
+
+  // ---------- plan rendering ----------
+  function qButton(q, extraClass, kindLabel) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "q" + (extraClass ? " " + extraClass : "");
+    b.innerHTML = (kindLabel ? '<span class="kind">' + escapeHtml(kindLabel) + "</span>" : "")
+      + (q.lead ? '<span class="lead">' + escapeHtml(q.lead) + "</span>" : "")
+      + escapeHtml(q.question)
+      + (q.why ? "<small>" + escapeHtml(q.why) + "</small>" : "")
+      + (q.beat ? '<span class="beat">(' + escapeHtml(q.beat) + ")</span>" : "");
+    b.addEventListener("click", () => { if (!b.classList.contains("was-asked")) markAsked(q); });
+    b.dataset.q = q.question;
+    return b;
+  }
+  function renderPlan() {
+    el.planSections.innerHTML = "";
+    const sec = (title, items) => {
+      if (!items || !items.length) return;
+      const h = document.createElement("h3"); h.textContent = title; el.planSections.append(h);
+      const wrap = document.createElement("div"); wrap.className = "questions";
+      items.forEach(q => wrap.append(qButton(q)));
+      el.planSections.append(wrap);
+    };
+    sec("Opening & connection", T.plan.opening);
+    sec("Background", T.plan.background);
+    if (T.plan.walk && T.plan.walk.length) {
+      const h = document.createElement("h3"); h.textContent = "The role, requirement by requirement"; el.planSections.append(h);
+      T.plan.walk.forEach(w => {
+        const row = document.createElement("div"); row.className = "walkrow";
+        const req = document.createElement("p"); req.className = "req"; req.textContent = w.requirement; row.append(req);
+        const meta = document.createElement("p"); meta.className = "meta";
+        meta.innerHTML = '<span class="fit ' + escapeHtml(w.fit) + '">' + escapeHtml(w.fit) + "</span> &middot; " + escapeHtml(w.evidence || "");
+        row.append(meta);
+        row.append(qButton({ question: w.question, why: w.why, lead: w.lead, beat: w.beat }));
+        el.planSections.append(row);
+      });
+    }
+  }
+  function markPlanButtons() {
+    el.planSections.querySelectorAll("button.q").forEach(b => {
+      if (T.asked.some(a => a.question === b.dataset.q)) b.classList.add("was-asked");
+    });
+  }
+
+  // ---------- asked + notes ----------
+  function markAsked(q) {
+    if (M.mode === "interview") {
+      // live recruiter chair: a tap in "review the full plan" serves that question, same as a pool card
+      if (L.phase === "pool" || L.phase === "serving") serveQuestion(q);
+      return;
+    }
+    T.asked.push({ question: q.question, why: q.why || "", note: null });
+    T.now = T.now.filter(x => x.question !== q.question);
+    renderNow(); renderAsked(); markPlanButtons();
+    if (T.listening && T.now.length === 0 && !T.busy) ask(true);
+  }
+  function renderAsked() {
+    el.askedHead.hidden = T.asked.length === 0;
+    el.asked.innerHTML = "";
+    T.asked.slice(-8).forEach(a => {
+      const li = document.createElement("li");
+      li.innerHTML = '<span class="aq">' + escapeHtml(a.question) + "</span>"
+        + (a.note ? '<span class="note">' + escapeHtml(a.note) + "</span>" : "");
+      el.asked.append(li);
+    });
+  }
+  function renderNow() {
+    el.nowWrap.hidden = T.now.length === 0;
+    el.nowQuestions.innerHTML = "";
+    T.now.forEach(q => {
+      el.nowQuestions.append(qButton(q, q.kind === "followup" ? "followup" : "", q.kind === "followup" ? "follow-up" : null));
+    });
+  }
+
+  // ---------- transcript ----------
+  function renderTranscript() {
+    el.transcript.innerHTML = "";
+    el.transcript.append(document.createTextNode(T.finalText));
+    if (T.interim) {
+      const i = document.createElement("span");
+      i.className = "interim"; i.textContent = " " + T.interim;
+      el.transcript.append(i);
+    }
+    el.transcript.scrollTop = el.transcript.scrollHeight;
+  }
+  function commit(text) {
+    const t = text.trim();
+    if (!t) return;
+    T.finalText += (T.finalText ? "\n" : "") + t;
+    renderTranscript();
+  }
+  function addManual() { commit(el.manual.value); el.manual.value = ""; }
+  el.add.addEventListener("click", addManual);
+  el.manual.addEventListener("keydown", e => { if (e.key === "Enter") addManual(); });
+
+  // ---------- speech recognition ----------
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const framed = window.self !== window.top;
+  if (!SR) {
+    el.listen.disabled = true;
+    setStatus("This browser has no speech recognition - use Chrome, or type lines into the transcript.", false);
+  } else if (framed) {
+    setStatus("Preview mode: the microphone is blocked inside this frame. Plan-building works; listening needs the real page.", false);
+  }
+
+  function cue(text, live) {
+    el.cueText.textContent = text;
+    el.cueDot.classList.toggle("live", live);
+  }
+  function startRec() {
+    if (!SR) { cue("not listening - this browser has no speech recognition; use Chrome", false); return; }
+    const r = new SR();
+    r.continuous = true; r.interimResults = true; r.lang = "en-US";
+    r.onresult = (e) => {
+      let interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const res = e.results[i];
+        if (res.isFinal) commit(res[0].transcript);
+        else interim += res[0].transcript;
+      }
+      T.interim = interim; renderTranscript();
+    };
+    r.onerror = (e) => {
+      if (e.error === "not-allowed") { stopListening(); setStatus("Microphone access was blocked. Allow it in the address bar and start again.", false, true); cue("not listening - microphone blocked", false); }
+      else if (e.error === "audio-capture") { stopListening(); setStatus("No microphone found. Connect one and start again.", false, true); cue("not listening - no microphone found", false); }
+      else if (e.error === "no-speech") { /* quiet stretches are normal */ }
+      else setStatus("Recognizer hiccup: " + e.error + ". Still listening.", true);
+    };
+    r.onend = () => { if (T.listening) { try { r.start(); } catch (_) {} } };
+    try { r.start(); } catch (err) {
+      stopListening();
+      setStatus("The browser refused the microphone (" + (err.message || err.name) + "). On the real page or localhost this works.", false, true);
+      cue("not listening - the browser refused the microphone", false);
+      return;
+    }
+    T.rec = r;
+  }
+  function startListening() {
+    if (!T.plan) { setStatus("Build the plan first - the call runs through it.", false, true); return; }
+    T.listening = true;
+    el.listen.textContent = M.mode === "interview" ? "Stop listening" : "Stop practicing";
+    if (M.mode === "interview") {
+      el.refresh.disabled = false;
+      setStatus("Listening. Notes and follow-ups as the answers come.", true);
+      startRec();
+      T.timer = setInterval(tick, 20000);
+    } else {
+      if (!PQ.list.length) buildQueue();
+      startRec();
+      setStatus("Practicing. Answer out loud; grade when you're done.", true);
+      const ask = () => (PQ.phase === "noted" ? advancePractice() : showPracticeQ());  // a graded question moves on
+      const r = T.rec;
+      if (el.voice.checked && r) {
+        // ask once the mic is really up, so Chrome's permission prompt and mic errors come before Ripper talks
+        let asked = false;
+        const go = () => { if (asked) return; asked = true; r.removeEventListener("start", go); if (T.listening && T.rec === r) ask(); };
+        r.addEventListener("start", go);
+        setTimeout(go, 8000);  // a browser that never says "start" still gets its question
+      } else if (T.listening) ask();
+    }
+  }
+  function stopListening() {
+    T.listening = false;
+    clearInterval(T.timer); T.timer = null;
+    if (T.rec) { try { T.rec.onend = null; T.rec.stop(); } catch (_) {} T.rec = null; }
+    T.interim = ""; renderTranscript();
+    el.listen.textContent = M.mode === "interview" ? "Start listening" : "Start practicing";
+    quiet();
+    setStatus("Stopped. Transcript kept; start again to continue.", false);
+  }
+  el.listen.addEventListener("click", () => T.listening ? stopListening() : startListening());
+
+  // ---------- the live call ----------
+  const LIVE_SYSTEM = `You sit beside an interviewer on a live screening call. You see the role, the interview plan with fit judgments, the questions already asked, and the rolling transcript.
+
+Three jobs, every pass:
+1. GRADE: for each already-asked question whose answer now appears in the transcript and has no note yet, write a one-line note on the answer as evidence - what it gave or didn't. Examples of register: "gave a number and a name", "described the team's work, not their own", "answered a different question", "named the tool but not what they built with it". A note, never a score, never advice. Judge it against the question that was asked, not the whole role, and credit what it did give before naming what's missing. Keep it under 15 words.
+2. DECIDE: if the latest answer needs more - vague, impressive-sounding but evidence-free, or contradicts the resume - write a follow-up.
+3. PROPOSE: up to 3 questions for right now. Follow-ups first when needed. Otherwise the best next unasked questions from the plan (copy their text exactly), favoring requirements still untested; add a fresh probe only when the conversation opened a door the plan didn't predict.
+
+Rules: one sentence per question, readable mid-call. Never repeat or rephrase an asked question. If the transcript has no new answer material, return empty notes and the next plan questions.
+
+Stage directions: a question may carry "lead" (one bridge sentence to say before it, grounding it in what the candidate just said) and "beat" (a short delivery note for after - "pause", "let the silence work"). Follow-ups almost always deserve a lead that acknowledges the answer being pressed. Plan questions copied from the plan keep their own staging if they had it.
+
+Return ONLY JSON, no prose, no code fences:
+{"notes":[{"n":1,"note":"..."}],"now":[{"question":"...","why":"...","kind":"followup|plan|probe","lead":"...","beat":"..."}]}
+"n" is the number of the asked question as listed.`;
+
+  function tick() {
+    if (T.busy) return;
+    if (T.finalText.length < 80) return;
+    if (T.finalText === T.lastSent) return;
+    ask();
+  }
+  el.refresh.addEventListener("click", () => { if (!T.busy && T.plan) ask(true); });
+
+  function planSummary() {
+    if (!T.plan) return "";
+    const lines = [];
+    (T.plan.walk || []).forEach(w => lines.push("- [" + w.fit + "] " + w.requirement + " -> " + w.question));
+    return lines.join("\n");
+  }
+
+  async function ask(manual = false) {
+    T.busy = true; el.refresh.disabled = true;
+    setStatus(manual ? "Writing fresh questions\u2026" : "Listening. Updating\u2026", T.listening);
+    const user =
+`THE ROLE:
+${el.jd.value.trim().slice(0, 2500)}
+
+THE PLAN (requirement walk, with fit):
+${planSummary()}
+
+ASKED SO FAR (numbered; note any answered ones that lack a note):
+${T.asked.length ? T.asked.map((a, i) => (i + 1) + ". " + a.question + (a.note ? " [note: " + a.note + "]" : " [no note yet]")).join("\n") : "(none yet)"}
+
+TRANSCRIPT SO FAR (most recent at the bottom):
+${T.finalText.slice(-6000) || "(nothing yet)"}`;
+    try {
+      const raw = await callModel(LIVE_SYSTEM, user, 1400);
+      const parsed = parseJSON(raw);
+      (parsed.notes || []).forEach(n => {
+        const i = (n.n | 0) - 1;
+        const note = typeof n.note === "string" ? tidy(n.note) : "";
+        if (T.asked[i] && note && !T.asked[i].note) T.asked[i].note = note;
+      });
+      const now = (parsed.now || []).slice(0, 3).filter(q => q && q.question)
+        .filter(q => !T.asked.some(a => a.question === q.question));
+      T.now = now; T.lastSent = T.finalText;
+      renderNow(); renderAsked();
+      setStatus(T.listening ? "Listening. Updated." : "Updated.", T.listening);
+    } catch (err) {
+      setStatus("Couldn't update (" + err.message + "). Next pass will retry.", T.listening, true);
+    } finally {
+      T.busy = false; el.refresh.disabled = !T.plan;
+    }
+  }
+
+  // ---------- paged live flow (recruiter) ----------
+  const DEAL_SYSTEM = `You are Ripper, a recruiter's listening companion, live inside an interview. You receive the role, the interview plan, what has been asked, and the transcript so far. Two jobs. First, NOTE: one line on the LAST ANSWER - the answer to the last question in ASKED SO FAR - as evidence: what it gave or didn't. Register: "gave a number and a name", "described the team's work, not their own", "answered a different question", "named the tool but not what they built with it". A note, never a score, never advice. Judge it against the question that was asked, not the whole role, and credit what it did give before naming what's missing. Keep it under 15 words. If LAST ANSWER says to leave the note empty, or holds no real answer yet, the note is an empty string. Second, DEAL the next three questions the interviewer should have in hand. Follow the energy of the most recent answer: press where it dodged, cash in what it offered, or advance the plan's arc where the ground is covered. Prefer pressing an unanswered dodge over moving on. Every question must be askable aloud in one breath. A question may carry a short spoken lead-in ("lead") bridging from what was just said, and a stage direction ("beat") for delivery - sparing, like a producer's margin note. Reply ONLY with JSON, no prose, no markdown: {"note":"...","now":[{"question":"...","lead":"...","beat":"..."}]} - up to 3 items; lead and beat optional.`;
+  const L = { phase: "idle" };
+  function arcList() {
+    if (!T.plan) return [];
+    return [].concat(T.plan.opening || [], T.plan.background || [],
+      (T.plan.walk || []).map(w => ({ question: w.question, why: w.why, lead: w.lead, beat: w.beat })));
+  }
+  function nextFromPlan(n) {
+    return arcList().filter(q => !T.asked.some(a => a.question === q.question)).slice(0, n);
+  }
+  function poolCard(q) {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "q";
+    b.innerHTML = (q.lead ? '<span class="lead">' + escapeHtml(q.lead) + "</span>" : "")
+      + escapeHtml(q.question)
+      + (q.beat ? '<span class="beat">(' + escapeHtml(q.beat) + ")</span>" : "");
+    b.addEventListener("click", () => serveQuestion(q));
+    return b;
+  }
+  function showPool(arr) {
+    L.phase = "pool";
+    el.serveWrap.hidden = true; el.recordWrap.hidden = true;
+    el.poolNote.hidden = true; el.poolNote.textContent = "";
+    el.dealNote.hidden = true; el.dealNote.textContent = "";
+    el.poolQuestions.innerHTML = "";
+    (arr && arr.length ? arr : nextFromPlan(3)).forEach(q => el.poolQuestions.append(poolCard(q)));
+    if (!el.poolQuestions.children.length) {
+      const p = document.createElement("p");
+      p.className = "viewintro";
+      p.textContent = "The plan is fully served. Deal fresh, or finish.";
+      el.poolQuestions.append(p);
+    }
+    el.poolWrap.hidden = false;
+    el.liveView.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+  function serveQuestion(q) {
+    T.asked.push({ question: q.question, why: q.why || "", note: null, at: T.finalText.length });  // at: where its answer starts
+    markPlanButtons();
+    L.phase = "serving";
+    el.poolWrap.hidden = true; el.planPanel.hidden = true;
+    el.serveLead.textContent = q.lead || "You're asking:";
+    el.serveQ.textContent = q.question;
+    el.serveBeat.hidden = !q.beat;
+    el.serveBeat.textContent = q.beat ? "(" + q.beat + ")" : "";
+    el.serveStatusText.textContent = "Listening. When the answer lands, deal the next three.";
+    el.serveWrap.hidden = false;
+  }
+  function startInterviewLive() {
+    setPrep("", false);
+    T.listening = true;
+    cue("listening", true);
+    startRec();
+    el.prepPanel.hidden = true;
+    el.planPanel.hidden = true;
+    el.liveView.hidden = false;
+    el.liveCue.hidden = false;
+    el.nextPool.disabled = false;
+    showPool(nextFromPlan(3));
+  }
+  async function gradeAndDeal(fromPhase) {
+    if (T.busy) return;
+    T.busy = true;
+    el.nextPool.disabled = true;
+    const askedRef = T.asked, target = T.asked.length - 1;  // the answer this deal notes; a new session swaps T.asked out
+    const same = () => T.asked === askedRef;                  // still the interview this deal was asked for?
+    const last = askedRef[target];
+    const heard = last && !last.note ? (T.finalText.slice(last.at || 0) + " " + T.interim).trim() : "";
+    const lastAnswer = !last ? "(nothing served yet - leave the note empty)"
+      : last.note ? "(already noted - leave the note empty)"
+      : !heard ? "(nothing heard yet - leave the note empty)"
+      : heard.length > 3000 ? "(start cut for length) ..." + heard.slice(-3000) : heard;
+    const msg = "Ripper is reading the answer - a few seconds. Say so (it's AI-assisted and catching up), or use the gap to be human: a little small talk helps, because this is a harrowing exercise for the person across from you.";
+    if (fromPhase === "serving") el.serveStatusText.textContent = msg;
+    else { el.poolNote.textContent = "Dealing three fresh\u2026"; el.poolNote.hidden = false; }
+    const user =
+`THE ROLE:
+${el.jd.value.trim().slice(0, 2000)}
+
+THE PLAN (requirement walk, with fit):
+${planSummary()}
+
+ASKED SO FAR:
+${T.asked.length ? T.asked.map((a, i) => (i + 1) + ". " + a.question).join("\n") : "(none yet)"}
+
+TRANSCRIPT SO FAR (most recent at the bottom):
+${(T.finalText + (T.interim ? " " + T.interim : "")).slice(-3500) || "(nothing yet)"}
+
+LAST ANSWER (everything heard since the last question was served):
+${lastAnswer}`;
+    try {
+      const raw = await callModel(DEAL_SYSTEM, user, 700);
+      const parsed = parseJSON(raw);
+      const note = typeof parsed.note === "string" ? tidy(parsed.note) : "";
+      if (note && askedRef[target] && !askedRef[target].note) askedRef[target].note = note;
+      const pool = (parsed.now || []).slice(0, 3).filter(q => q && q.question)
+        .filter(q => !T.asked.some(a => a.question === q.question));
+      if (same() && L.phase === fromPhase && T.asked.length === target + 1) { showPool(pool.length ? pool : nextFromPlan(3)); showLastNote(); }  // not if they finished, served something, or started a new interview meanwhile
+    } catch (err) {
+      if (same() && L.phase === fromPhase && T.asked.length === target + 1) {
+        showPool(nextFromPlan(3)); showLastNote();
+        el.poolNote.textContent = "Couldn't reach the model (" + err.message + ") - dealing from the plan.";
+        el.poolNote.hidden = false;
+      }
+    } finally {
+      if (!same()) return;  // a new interview owns T.busy and the buttons now
+      T.busy = false; el.nextPool.disabled = false;
+      // finished while this deal was in flight: the record stays up, shows this deal's note, and still gets the rest
+      if (L.phase === "record") { renderRecord(); gradeAndDealFinal(); }
+    }
+  }
+  function showLastNote() {
+    const last = T.asked[T.asked.length - 1];
+    el.dealNote.textContent = last && last.note ? last.note : "";
+    el.dealNote.hidden = !el.dealNote.textContent;
+  }
+  el.nextPool.addEventListener("click", () => gradeAndDeal("serving"));
+  el.reroll.addEventListener("click", () => gradeAndDeal("pool"));
+  el.planPeek.addEventListener("click", () => {
+    el.planPanel.hidden = !el.planPanel.hidden;
+    el.planBack.hidden = el.planPanel.hidden;   // the plan is long: the way back sits at its top
+    if (!el.planPanel.hidden) el.planPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+  el.planBackBtn.addEventListener("click", () => {
+    el.planPanel.hidden = true; el.planBack.hidden = true;
+    el.liveView.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+  function renderRecord() {
+    el.recordAsked.innerHTML = "";
+    T.asked.forEach(a => {
+      const li = document.createElement("li");
+      li.innerHTML = '<span class="aq">' + escapeHtml(a.question) + "</span>"
+        + (a.note ? '<span class="note">' + escapeHtml(a.note) + "</span>" : "");
+      el.recordAsked.append(li);
+    });
+  }
+  function finishInterview() {
+    stopListening();
+    el.liveCue.hidden = true;
+    el.poolWrap.hidden = true; el.serveWrap.hidden = true; el.planPanel.hidden = true;
+    el.recordNote.hidden = true;
+    renderRecord();
+    el.recordWrap.hidden = false;
+    L.phase = "record";
+    recordBusy(true);
+    gradeAndDealFinal();
+  }
+  function recordBusy(on) {
+    el.downloadRec.disabled = on;
+    el.downloadRec.textContent = on ? "Ripper is writing the notes\u2026" : "Download the record";
+  }
+  async function gradeAndDealFinal() {
+    // one last quiet pass so the final answer gets its note
+    if (T.busy) return;  // a deal is in flight; it calls back here when it lands
+    if (!T.asked.some(a => !a.note)) { recordBusy(false); return; }
+    T.busy = true;
+    const askedRef = T.asked, same = () => T.asked === askedRef;  // notes belong to this interview, even if another starts
+    try {
+      const user =
+`THE ROLE:
+${el.jd.value.trim().slice(0, 2500)}
+
+THE PLAN (requirement walk, with fit):
+${planSummary()}
+
+ASKED SO FAR (numbered; note any answered ones that lack a note):
+${T.asked.map((a, i) => (i + 1) + ". " + a.question + (a.note ? " [note: " + a.note + "]" : " [no note yet]")).join("\n")}
+
+TRANSCRIPT SO FAR (most recent at the bottom):
+${T.finalText.slice(-6000) || "(nothing yet)"}`;
+      const raw = await callModel(LIVE_SYSTEM, user, 1400);
+      const parsed = parseJSON(raw);
+      (parsed.notes || []).forEach(n => {
+        const i = (n.n | 0) - 1;
+        const note = typeof n.note === "string" ? tidy(n.note) : "";
+        if (askedRef[i] && note && !askedRef[i].note) askedRef[i].note = note;
+      });
+      if (same()) renderRecord();
+    } catch (err) {
+      // record stands as-is, but say so
+      if (same()) {
+        el.recordNote.textContent = "Couldn't write the notes (" + err.message + "). The questions and transcript are all here.";
+        el.recordNote.hidden = false;
+      }
+    }
+    finally { if (same()) { T.busy = false; recordBusy(false); } }
+  }
+  el.finish.addEventListener("click", finishInterview);
+  el.finish2.addEventListener("click", finishInterview);
+  el.downloadRec.addEventListener("click", () => {
+    const lines = [];
+    lines.push("RIPPER - interview record");
+    lines.push(new Date().toLocaleString());
+    lines.push("");
+    lines.push("QUESTIONS SERVED, WITH NOTES");
+    T.asked.forEach((a, i) => {
+      lines.push((i + 1) + ". " + a.question);
+      if (a.note) lines.push("   note: " + a.note);
+    });
+    lines.push("");
+    lines.push("FULL TRANSCRIPT");
+    lines.push(T.finalText || "(empty)");
+    const blob = new Blob([lines.join("\n")], { type: "text/plain" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "ripper_record.txt";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  });
+
+  // ---------- router: one page per door ----------
+  const sheetEl = document.querySelector(".sheet");
+  const VIEWMAP = { "#recruiters": "tool", "#practice": "tool", "#people": "people", "#panels": "panels", "#employers": "employers", "#ripper": "ripper" };
+  const TITLES = {
+    "": "Ripper the Recruiter",
+    "#recruiters": "Ripper - the recruiter's chair",
+    "#practice": "Ripper - the practice chair",
+    "#people": "Ripper - people who can help",
+    "#panels": "Ripper - panels",
+    "#employers": "Ripper - employers",
+    "#ripper": "Ripper himself",
+  };
+  function route(scroll) {
+    const h = (location.hash in VIEWMAP) ? location.hash : "";
+    const target = h ? VIEWMAP[h] : "home";
+    document.querySelectorAll(".view").forEach(v => v.classList.toggle("active", v.id === target));
+    if (h === "#practice") setMode("practice");
+    else if (h === "#recruiters") setMode("interview");
+    document.title = TITLES[h] || TITLES[""];
+    if (scroll && h) sheetEl.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+  window.ripperRoute = route;
+  window.addEventListener("hashchange", () => route(true));
+  route(location.hash !== "");
+})();
+</script>
+</body>
+</html>
