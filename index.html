@@ -357,6 +357,11 @@
   .meter i { display: block; width: 4px; height: 18px; background: var(--rule); transform-origin: bottom; transform: scaleY(.15); transition: transform 60ms linear; }
   .meter.hearing i { background: var(--red); }
   .micgate { margin: 0 0 18px; }
+  .theyasked { margin: 0 0 14px; border-left: 3px solid var(--red); padding: 6px 12px; font-size: 14.5px; color: var(--ink); }
+  .theyasked::before { content: "they asked  "; color: var(--red); font-size: 12.5px; }
+  .livecue .cuebtn { margin-left: 2px; font-size: 13px; }
+  .asked li .tq { display: block; margin-top: 4px; font-size: 14px; color: var(--pencil); }
+  .asked li .tq::before { content: "they asked "; color: var(--red); font-size: 12.5px; }
   .livecue {
     position: fixed;
     top: calc(12px + env(safe-area-inset-top, 0px));
@@ -398,7 +403,7 @@
     </div>
   </header>
 
-  <div class="livecue" id="liveCue" role="status" hidden><span class="dot live" id="cueDot"></span><span id="cueText">listening</span><span class="meter" id="cueMeter" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span></div>
+  <div class="livecue" id="liveCue" role="status" hidden><span class="dot live" id="cueDot"></span><span id="cueText">listening</span><span class="meter" id="cueMeter" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><button class="linklike cuebtn" id="pauseMic" type="button" aria-label="Pause listening">pause</button></div>
   <div class="sheet">
     <section id="home" class="view">
       <section class="pitch">
@@ -504,6 +509,7 @@
         </div>
         <div id="poolWrap" hidden>
           <p class="dealnote" id="dealNote" hidden></p>
+          <p class="theyasked" id="theyAsked" hidden></p>
           <h2>Ask one of these</h2>
           <p class="viewintro">Tap the one you serve - the tap is just for the record. Then talk like a person.</p>
           <div class="questions" id="poolQuestions"></div>
@@ -533,6 +539,8 @@
         <div id="recordWrap" hidden>
           <h2>The record</h2>
           <p class="viewintro">Every question served, with Ripper's note on what the answer gave.</p>
+          <p class="fine" id="recordComp" hidden></p>
+          <ul class="asked" id="recordOpen" aria-label="Open items" hidden></ul>
           <ul class="asked" id="recordAsked"></ul>
           <p class="fine" id="recordNote" hidden></p>
           <div class="gobar"><button id="downloadRec" type="button">Download the record</button></div>
@@ -636,14 +644,14 @@
     cueDot: $("cueDot"), cueText: $("cueText"), poolNote: $("poolNote"), recordNote: $("recordNote"),
     dealNote: $("dealNote"), consentNote: $("consentNote"), planBack: $("planBack"), planBackBtn: $("planBackBtn"),
     micGate: $("micGate"), startMic: $("startMic"), micGateText: $("micGateText"), liveManual: $("liveManual"), liveAdd: $("liveAdd"),
-    finishPractice: $("finishPractice"),
+    finishPractice: $("finishPractice"), pauseMic: $("pauseMic"), theyAsked: $("theyAsked"), recordComp: $("recordComp"), recordOpen: $("recordOpen"),
   };
   document.getElementById("duckroomImg").src = document.querySelector(".hero-img").src;
 
   // ---------- provider ----------
   // PINNED on purpose - read before changing. claude-sonnet-4-6 runs without thinking when the request
-  // sends no "thinking" field, so this file's small max_tokens budgets hold: plan 4500, notes pass 1400,
-  // deal 700, practice grade 500. claude-sonnet-5-5 and claude-opus-5-5 think by default and the thinking
+  // sends no "thinking" field, so this file's small max_tokens budgets hold: plan 4500, wrap-up 2000,
+  // deal 900, practice grade 500 (the unused legacy notes pass, 1400). claude-sonnet-5-5 and claude-opus-5-5 think by default and the thinking
   // spends max_tokens, so changing this string alone gets replies cut off at the token limit. Sonnet 5.5
   // answers {type: "disabled"} with a 400 - it turns thinking off with thinking: {type: "between_tools"}
   // (only at effort high or below, and with no other thinking fields);
@@ -660,13 +668,23 @@
     return label + " " + res.status + (hint || (detail ? " - " + detail.slice(0, 140).replace(/\.$/, "") : ""));
   }
 
-  async function callModel(system, user, maxTokens) {
+  async function callModel(system, user, maxTokens, waitMs = 90000) {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), waitMs);  // a call that never comes back can't lock the page
+    try { return await callModelOnce(system, user, maxTokens, ctl.signal); }
+    catch (err) {
+      if (err && err.name === "AbortError") throw new Error("no reply after " + Math.round(waitMs / 1000) + " seconds - try again");
+      throw err;
+    }
+    finally { clearTimeout(timer); }
+  }
+  async function callModelOnce(system, user, maxTokens, signal) {
     const key = el.apikey.value.trim();
     const model = el.model.value.trim() || DEFAULT_MODEL[el.provider.value];
     if (el.provider.value === "openai") {
       if (!key) throw new Error("no key - open the key drawer and paste one");
       const res = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
+        method: "POST", signal,
         headers: { "Content-Type": "application/json", "Authorization": "Bearer " + key },
         body: JSON.stringify({
           model, max_completion_tokens: maxTokens,
@@ -689,10 +707,11 @@
     let res;
     try {
       res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST", headers,
+        method: "POST", headers, signal,
         body: JSON.stringify({ model, max_tokens: maxTokens, system, messages: [{ role: "user", content: user }] }),
       });
     } catch (err) {
+      if (err && err.name === "AbortError") throw err;
       // keyless calls are refused at the CORS preflight off claude.ai, so they surface as a network error
       if (!key) throw new Error("no key - open the key drawer and paste one");
       throw err;
@@ -954,12 +973,14 @@ Shape of the plan:
 3. "walk" - the role, requirement by requirement. Distill the job description into its 5 to 10 real requirements (what would actually rule someone in or out - not every bullet). Cover every distinct area of the job, and count stated preferences (an industry, a tool, a domain) and numeric targets (a retention rate, a quota, a ratio) as requirements too. For each: judge the resume's fit as one of "strong" (clear direct evidence), "partial" (some evidence, thin), "transferable" (no direct match, but a different experience exercises the same muscle - name the bridge), or "gap" (nothing on the page). Quote the shortest honest evidence clause from the resume, or write "not on the page". Then write the one question that tests it - evidence-seeking: numbers, names, what they personally did, what broke.
 4. "logistics" - 2 to 4 short practical questions every recruiter screen covers, drawn from the posting: pay expectations against the posted range (quote the range only if the posting gives one), start date or notice period, the location, hybrid or travel arrangement the posting states, and work authorization if the posting raises it. Ask about pay expectations only, never current or past salary, and ask only whether they're authorized to work there, never about citizenship, nationality, age, family or health. Plain and respectful, no lead.
 
-Rules: every question is one sentence a person can read mid-call. A "transferable" judgment must say what transfers in its why. Do not flatter the candidate or pad the plan. State only facts that are in the role or the resume - never invent numbers, percentages or claims, in a question or in a lead. Work out dates and durations from TODAY.
+Rules: every question is one sentence a person can read mid-call. A "transferable" judgment must say what transfers in its why. Do not flatter the candidate or pad the plan. State only facts that are in the role or the resume - never invent numbers, percentages or claims, in a question or in a lead. Keep the resume's facts exactly as written: never round up a scope, count, title or result (managing one location in a group of three is not running three locations), and quote evidence word for word - a plan that inflates the resume can't catch a candidate who inflates it. Work out dates and durations from TODAY.
 
 Stage directions: this plan will be performed as a conversation, not read as a list. For any question that needs it, add "lead" - one natural bridge sentence to say out loud before the question ("I saw the move from St. Louis to New York on your resume...") - and "beat" - a short direction for after it ("pause - let them fill the silence", "don't rescue them", "if they laugh, let it run"). Write them like a producer's margin notes: human, sparing, specific. Opening questions almost always deserve a lead. A question that stands alone gets neither - empty string.
 
+Also return "candidate" - the person's name as the resume gives it, or "" if it doesn't - and "role" - the job title, with the company if the posting names one. They label the record.
+
 Return ONLY JSON, no prose, no code fences:
-{"opening":[{"question":"...","why":"...","lead":"...","beat":"..."}],"background":[{"question":"...","why":"...","lead":"...","beat":"..."}],"walk":[{"requirement":"...","fit":"strong|partial|transferable|gap","evidence":"...","question":"...","why":"...","lead":"...","beat":"..."}],"logistics":[{"question":"...","why":"..."}]}`;
+{"candidate":"...","role":"...","opening":[{"question":"...","why":"...","lead":"...","beat":"..."}],"background":[{"question":"...","why":"...","lead":"...","beat":"..."}],"walk":[{"requirement":"...","fit":"strong|partial|transferable|gap","evidence":"...","question":"...","why":"...","lead":"...","beat":"..."}],"logistics":[{"question":"...","why":"..."}]}`;
 
   async function buildPlan() {
     const jd = el.jd.value.trim(), resume = el.resume.value.trim();
@@ -970,12 +991,14 @@ Return ONLY JSON, no prose, no code fences:
     const today = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
     const user = `TODAY: ${today}\n\nTHE ROLE:\n${jd.slice(0, 12000)}\n\nTHE CANDIDATE'S RESUME:\n${resume.slice(0, 12000)}`;  // pay, location and authorization often sit at the end of a posting
     try {
-      const raw = await callModel(PREP_SYSTEM, user, 4500);
+      const raw = await callModel(PREP_SYSTEM, user, 4500, 180000);  // a full plan can take a minute or more
       const plan = parseJSON(raw);
       ["opening", "background", "walk", "logistics"].forEach(k => {  // every group is a list of questions, whatever shape the model sent
         plan[k] = (Array.isArray(plan[k]) ? plan[k] : []).filter(q => q && typeof q.question === "string" && q.question);
       });
       if (!plan.walk.length) throw new Error("empty plan");
+      plan.candidate = typeof plan.candidate === "string" ? plan.candidate : null;  // "" = not on the page; null = not given back
+      plan.role = typeof plan.role === "string" ? plan.role : null;
       T.plan = plan;
       T.asked = []; T.now = []; T.lastSent = ""; renderAsked(); renderNow();
       T.finalText = ""; T.interim = ""; renderTranscript();  // a new plan is a new session - never carry the last candidate's words
@@ -1211,10 +1234,12 @@ Return ONLY JSON, no prose, no code fences:
     }
   }
   function stopListening() {
-    T.listening = false;
+    T.listening = false; T.paused = false;
+    if (el.pauseMic) syncPause();
     clearInterval(T.timer); T.timer = null;
-    if (T.rec) { try { T.rec.onend = null; T.rec.stop(); } catch (_) {} T.rec = null; }
-    T.interim = ""; renderTranscript();
+    if (T.interim) { const t = T.interim; T.interim = ""; commit(t); }  // words still being recognized are kept, not dropped
+    if (T.rec) { try { T.rec.onresult = null; T.rec.onend = null; T.rec.stop(); } catch (_) {} T.rec = null; }
+    renderTranscript();
     el.listen.textContent = M.mode === "interview" ? "Start listening" : "Start practicing";
     quiet(); meterOff();
     setStatus("Stopped. Transcript kept; start again to continue.", false);
@@ -1289,7 +1314,17 @@ ${T.finalText.slice(-6000) || "(nothing yet)"}`;
   }
 
   // ---------- paged live flow (recruiter) ----------
-  const DEAL_SYSTEM = `You are Ripper, a recruiter's listening companion, live inside an interview. You receive the role, the interview plan, what has been asked, and the transcript so far. Two jobs. First, NOTE: one line on the LAST ANSWER - the answer to the last question in ASKED SO FAR - as evidence: what it gave or didn't. Register: "gave a number and a name", "described the team's work, not their own", "answered a different question", "named the tool but not what they built with it". A note, never a score, never advice. Judge it against the question that was asked, not the whole role, and credit what it did give before naming what's missing. Keep it under 15 words. If LAST ANSWER says to leave the note empty, or holds no real answer yet, the note is an empty string. Second, DEAL the next three questions the interviewer should have in hand. Follow the energy of the most recent answer: press where it dodged, cash in what it offered, or advance the plan's arc where the ground is covered. Prefer pressing an unanswered dodge over moving on. Every question must be askable aloud in one breath. A question may carry a short spoken lead-in ("lead") bridging from what was just said, and a stage direction ("beat") for delivery - sparing, like a producer's margin note. Leads and questions state only what the role, the plan or the transcript says - never invent numbers or claims. Never ask about salary history, citizenship, nationality, age, family, health or any other protected topic. Reply ONLY with JSON, no prose, no markdown: {"note":"...","now":[{"question":"...","lead":"...","beat":"..."}]} - up to 3 items; lead and beat optional.`;
+  const DEAL_SYSTEM = `You are Ripper, a recruiter's listening companion, live inside an interview. You receive the role, the candidate's resume, the interview plan, what has been asked, and the transcript so far. The transcript is unlabeled: it holds both voices, including the recruiter reading each question aloud. Three jobs.
+
+First, NOTE: one line on the LAST ANSWER - the answer to the last question in ASKED SO FAR - as evidence: what it gave or didn't. Register: "gave a number and a name", "described the team's work, not their own", "answered a different question", "named the tool but not what they built with it". A note, never a score, never advice. Judge it against the question that was asked, not the whole role, and credit what it did give before naming what's missing. Keep it under 15 words. If the answer claims more than the resume shows - a bigger scope, a higher count, a title or result the resume doesn't support - say so plainly ("says led the whole region; resume: one store"). If the resume is marked cut, a claim it doesn't cover is "not on the visible resume", not an inflation. If LAST ANSWER says to leave the note empty, or holds no real answer yet, the note is an empty string.
+
+Second, DEAL the next three questions the interviewer should have in hand. Follow the energy of the most recent answer: press where it dodged, cash in what it offered, or advance the plan's arc where the ground is covered. Prefer pressing an unanswered dodge over moving on, and press a claim that goes beyond the resume. Every question must be askable aloud in one breath. A question may carry a short spoken lead-in ("lead") bridging from what was just said, and a stage direction ("beat") for delivery - sparing, like a producer's margin note.
+
+Third, THEY ASKED: any question the candidate put to the recruiter in LAST ANSWER - about the role, the company, pay or the process, not the recruiter's own questions - each with what the role or the plan says about it ("the posting lists a 10% annual bonus"), or "not in what Ripper read of the posting - find out and follow up". Never invent an answer. Empty list if they asked nothing.
+
+Rules for all three: state only what the role, the resume, the plan or the transcript says - never invent numbers or claims. Never ask about salary history, citizenship, nationality, age, family, health or any other protected topic. If the candidate volunteered current or past pay, never repeat the figure - in a note, a question or an answer, write "volunteered pay history - don't rely on it".
+
+Reply ONLY with JSON, no prose, no markdown: {"note":"...","theyAsked":[{"q":"...","a":"..."}],"now":[{"question":"...","lead":"...","beat":"..."}]} - up to 3 items; lead and beat optional.`;
   const L = { phase: "idle", saved: false };  // saved: this interview's record was downloaded
   function arcList() {
     if (!T.plan) return [];
@@ -1313,6 +1348,7 @@ ${T.finalText.slice(-6000) || "(nothing yet)"}`;
     el.serveWrap.hidden = true; el.recordWrap.hidden = true;
     el.poolNote.hidden = true; el.poolNote.textContent = "";
     el.dealNote.hidden = true; el.dealNote.textContent = "";
+    el.theyAsked.hidden = true; el.theyAsked.innerHTML = "";
     el.poolQuestions.innerHTML = "";
     (arr && arr.length ? arr : nextFromPlan(3)).forEach(q => el.poolQuestions.append(poolCard(q)));
     if (!el.poolQuestions.children.length) {
@@ -1345,7 +1381,8 @@ ${T.finalText.slice(-6000) || "(nothing yet)"}`;
     el.micGateText.textContent = "The mic is off. Tell the candidate Ripper is listening and taking notes, ask if that's all right, then start.";
     el.micGate.hidden = false;  // the consent line asks first; the mic waits for this press
     el.liveManual.value = ""; el.liveManual.disabled = false; el.liveAdd.disabled = false;
-    L.saved = false;
+    L.saved = false; L.wrap = null; L.startedAt = new Date();
+    T.paused = false; syncPause();
     el.nextPool.disabled = false;
     showPool(nextFromPlan(3));
   }
@@ -1361,22 +1398,49 @@ ${T.finalText.slice(-6000) || "(nothing yet)"}`;
     cue("listening", true);
     startRec();
     if (T.rec) meterOn();  // only when a recognizer actually started
+    syncPause();
     serveStatus();
   }
+  function resumeForCheck() {  // the same resume the plan read; if it's cut, say so - a claim past the cut isn't an inflation
+    const r = el.resume.value.trim();
+    return r.length > 12000 ? r.slice(0, 12000) + "\n(resume cut here for length)" : r;
+  }
   function serveStatus(extra) {  // the line under a served question always says what the mic is doing
-    if (L.phase !== "serving") return;
+    if (L.phase !== "serving" || T.busy) return;  // a deal in flight keeps its own line
     el.serveStatusText.textContent = (extra ? extra + " " : "") + (T.listening ? "Listening. When the answer lands, deal the next three."
+      : T.paused ? "Paused - tap resume in the listening badge when you're ready, or type what was said below."
       : "The mic is off - start listening above, or type what was said below.");
   }
+  function pauseLiveMic() {  // a side conversation stays out of the record: the mic really stops
+    if (!T.listening) return;
+    if (T.interim) { const t = T.interim; T.interim = ""; commit(t); }
+    T.listening = false; T.paused = true;
+    if (T.rec) { try { T.rec.onresult = null; T.rec.onerror = null; T.rec.onend = null; T.rec.abort(); } catch (_) {} T.rec = null; }
+    meterOff();
+    commit("[paused]");  // the record shows the gap instead of a short answer
+    cue("paused - not listening", false);
+    syncPause();
+    serveStatus();
+  }
+  function syncPause() {  // the badge's button only offers what it can do
+    el.pauseMic.hidden = !(T.listening || T.paused);
+    el.pauseMic.textContent = T.paused ? "resume" : "pause";
+    el.pauseMic.setAttribute("aria-label", T.paused ? "Resume listening" : "Pause listening");
+  }
+  el.pauseMic.addEventListener("click", () => {
+    if (T.listening) pauseLiveMic();
+    else if (T.paused) { T.paused = false; startLiveMic(); }
+  });
   el.startMic.addEventListener("click", startLiveMic);
   function micFailed(text) {  // recruiter chair: the mic stopped - offer the start button again
     if (M.mode !== "interview" || !(L.phase === "pool" || L.phase === "serving")) return;
     el.micGateText.textContent = text; el.micGate.hidden = false;
+    syncPause();
     serveStatus();
   }
   function addLiveLine() {
     const t = el.liveManual.value.trim(); if (!t) return;
-    commit(t); el.liveManual.value = "";
+    commit("[typed] " + t); el.liveManual.value = "";  // the record tells typed from heard
     serveStatus("Added. Ripper reads it with the answer.");
   }
   el.liveAdd.addEventListener("click", addLiveLine);
@@ -1400,7 +1464,10 @@ ${T.finalText.slice(-6000) || "(nothing yet)"}`;
     else { el.poolNote.textContent = "Dealing three fresh\u2026"; el.poolNote.hidden = false; }
     const user =
 `THE ROLE:
-${el.jd.value.trim().slice(0, 2000)}
+${el.jd.value.trim().slice(0, 12000)}
+
+THE CANDIDATE'S RESUME (to check claims against):
+${resumeForCheck()}
 
 THE PLAN (requirement walk, with fit):
 ${planSummary()}
@@ -1414,10 +1481,13 @@ ${(T.finalText + (T.interim ? " " + T.interim : "")).slice(-3500) || "(nothing y
 LAST ANSWER (everything heard since the last question was served):
 ${lastAnswer}`;
     try {
-      const raw = await callModel(DEAL_SYSTEM, user, 700);
+      const raw = await callModel(DEAL_SYSTEM, user, 900);
       const parsed = parseJSON(raw);
       const note = typeof parsed.note === "string" ? tidy(parsed.note) : "";
       if (note && askedRef[target] && !askedRef[target].note) askedRef[target].note = note;
+      const theyAsked = (Array.isArray(parsed.theyAsked) ? parsed.theyAsked : [])
+        .filter(x => x && typeof x.q === "string" && x.q).map(x => ({ q: x.q, a: typeof x.a === "string" ? x.a : "" }));
+      if (theyAsked.length && askedRef[target] && !askedRef[target].theyAsked) askedRef[target].theyAsked = theyAsked;  // the candidate's own questions don't get dropped
       const pool = (parsed.now || []).slice(0, 3).filter(q => q && q.question)
         .filter(q => !T.asked.some(a => a.question === q.question));
       if (same() && L.phase === fromPhase && T.asked.length === target + 1) { showPool(pool.length ? pool : nextFromPlan(3)); showLastNote(); }  // not if they finished, served something, or started a new interview meanwhile
@@ -1439,6 +1509,9 @@ ${lastAnswer}`;
     const last = T.asked[T.asked.length - 1];
     el.dealNote.textContent = last && last.note ? last.note : "";
     el.dealNote.hidden = !el.dealNote.textContent;
+    const ta = last && last.theyAsked ? last.theyAsked : [];
+    el.theyAsked.innerHTML = ta.map(x => escapeHtml(x.q) + (x.a ? " - <em>" + escapeHtml(x.a) + "</em>" : "")).join("<br>");
+    el.theyAsked.hidden = !ta.length;
   }
   el.nextPool.addEventListener("click", () => gradeAndDeal("serving"));
   el.reroll.addEventListener("click", () => gradeAndDeal("pool"));
@@ -1456,9 +1529,14 @@ ${lastAnswer}`;
     T.asked.forEach(a => {
       const li = document.createElement("li");
       li.innerHTML = '<span class="aq">' + escapeHtml(a.question) + "</span>"
-        + (a.note ? '<span class="note">' + escapeHtml(a.note) + "</span>" : "");
+        + (a.note ? '<span class="note">' + escapeHtml(a.note) + "</span>" : "")
+        + (a.theyAsked || []).map(x => '<span class="tq">' + escapeHtml(x.q) + (x.a ? " - " + escapeHtml(x.a) : "") + "</span>").join("");
       el.recordAsked.append(li);
     });
+    const W = L.wrap || {};
+    el.recordComp.textContent = W.comp ? "Comp: " + W.comp : ""; el.recordComp.hidden = !W.comp;
+    el.recordOpen.innerHTML = (W.open || []).map(o => "<li>Open: " + escapeHtml(o) + "</li>").join("");
+    el.recordOpen.hidden = !(W.open && W.open.length);
   }
   function finishInterview() {
     if (L.phase === "serving") addLiveLine();  // a typed last answer isn't dropped
@@ -1477,30 +1555,52 @@ ${lastAnswer}`;
     el.downloadRec.disabled = on;
     el.downloadRec.textContent = on ? "Ripper is writing the notes\u2026" : "Download the record";
   }
+  const WRAP_SYSTEM = `You close out a recruiter's screening call. You get the role, the candidate's resume, the plan's requirements with fit calls, every question asked (numbered, with any note and any question the candidate asked), and the transcript, where [typed] marks lines the recruiter typed and [paused] marks where the recruiter paused the mic. The transcript is unlabeled and holds both voices. If it is marked cut, judge the earlier questions from their notes.
+
+Five jobs:
+1. NOTES: for each question marked [no note yet] whose answer appears in the transcript, one line on the answer as evidence - what it gave or didn't. Register: "gave a number and a name", "described the team's work, not their own", "answered a different question". A note, never a score, never advice. Judge it against the question that was asked, not the whole role, and credit what it did give before naming what's missing. Keep it under 15 words. Flag a claim that goes beyond the resume (if the resume is marked cut, a claim it doesn't cover is "not on the visible resume").
+2. COMP: one line - the candidate's ask and how it sits against the posted range (quote the range from the role or the plan, or say Ripper found none). Empty string if pay never came up.
+3. OPEN: short items to follow up - questions the candidate asked that weren't answered, requirements never asked about, claims to check against the resume. Empty list if none.
+4. ROLLUP: for each requirement in the plan, copied exactly as the plan lists it, a few words on what the call showed. Judge an asked-and-noted requirement from what was heard or its note; "not covered" only if no question on it was asked.
+5. PAY HISTORY: true if the candidate volunteered current or past pay anywhere in the transcript, else false.
+
+Rules: state only what the transcript, the resume, the role or the plan says - never invent facts. Never repeat a volunteered current or past pay figure anywhere; write "volunteered pay history - don't rely on it" (many places bar using it). Never list a protected topic - salary history, citizenship, nationality, age, family, health - as something to follow up. Return ONLY JSON, no prose, no code fences:
+{"notes":[{"n":1,"note":"..."}],"comp":"...","open":["..."],"rollup":[{"requirement":"...","heard":"..."}],"payHistory":false}
+"n" is the number of the asked question as listed.`;
   async function gradeAndDealFinal() {
-    // one last quiet pass so the final answer gets its note
+    // the wrap-up: the last answers get their notes, and the record gets comp, open items and the requirement rollup
     if (T.busy) return;  // a deal is in flight; it calls back here when it lands
-    if (!T.asked.some(a => !a.note)) { recordBusy(false); return; }
+    if (!T.asked.length) { recordBusy(false); return; }
     T.busy = true;
     const askedRef = T.asked, same = () => T.asked === askedRef;  // notes belong to this interview, even if another starts
     try {
       const user =
 `THE ROLE:
-${el.jd.value.trim().slice(0, 2500)}
+${el.jd.value.trim().slice(0, 12000)}
+
+THE CANDIDATE'S RESUME:
+${resumeForCheck()}
 
 THE PLAN (requirement walk, with fit):
 ${planSummary()}
 
-ASKED SO FAR (numbered; note any answered ones that lack a note):
-${T.asked.map((a, i) => (i + 1) + ". " + a.question + (a.note ? " [note: " + a.note + "]" : " [no note yet]")).join("\n")}
+ASKED (numbered; note any answered ones that lack a note):
+${T.asked.map((a, i) => (i + 1) + ". " + a.question + (a.note ? " [note: " + a.note + "]" : " [no note yet]")
+  + (a.theyAsked || []).map(x => " [they asked: " + x.q + (x.a ? " - " + x.a : "") + "]").join("")).join("\n")}
 
-TRANSCRIPT SO FAR (most recent at the bottom):
-${T.finalText.slice(-6000) || "(nothing yet)"}`;
-      const raw = await callModel(LIVE_SYSTEM, user, 1400);
+TRANSCRIPT (most recent at the bottom):
+${(T.finalText.length > 40000 ? "(start cut for length - judge the earlier questions from their notes) ..." + T.finalText.slice(-40000) : T.finalText) || "(nothing yet)"}`;
+      const raw = await callModel(WRAP_SYSTEM, user, 2000);
       const parsed = parseJSON(raw);
-      (parsed.notes || []).forEach(n => {
-        const i = (n.n | 0) - 1;
-        const note = typeof n.note === "string" ? tidy(n.note) : "";
+      if (same()) L.wrap = {
+        comp: typeof parsed.comp === "string" ? parsed.comp : "",
+        open: (Array.isArray(parsed.open) ? parsed.open : []).filter(o => typeof o === "string" && o),
+        rollup: (Array.isArray(parsed.rollup) ? parsed.rollup : []).filter(r => r && typeof r.requirement === "string" && typeof r.heard === "string"),
+        payHistory: parsed.payHistory === true,
+      };
+      (Array.isArray(parsed.notes) ? parsed.notes : []).forEach(n => {
+        const i = ((n && n.n) | 0) - 1;
+        const note = n && typeof n.note === "string" ? tidy(n.note) : "";
         if (askedRef[i] && note && !askedRef[i].note) askedRef[i].note = note;
       });
       if (same()) renderRecord();
@@ -1515,24 +1615,49 @@ ${T.finalText.slice(-6000) || "(nothing yet)"}`;
   }
   el.finish.addEventListener("click", finishInterview);
   el.finish2.addEventListener("click", finishInterview);
+  function slug(text, fallback) {
+    const t = String(text || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40).replace(/-+$/, "");
+    return t || fallback;
+  }
   el.downloadRec.addEventListener("click", () => {
     L.saved = true;
-    const lines = [];
-    lines.push("RIPPER - interview record");
-    lines.push(new Date().toLocaleString());
+    const P = T.plan || {}, W = L.wrap || {};
+    const firstLine = v => (v.trim().split("\n")[0] || "").trim().slice(0, 80);
+    const candidate = P.candidate || (P.candidate === "" ? "(not on the resume)" : firstLine(el.resume.value)) || "(not given)";
+    const role = P.role || (P.role === "" ? "(not in the posting)" : firstLine(el.jd.value)) || "(not given)";
+    const now = L.startedAt || new Date();  // the call's date, not the download's
+    const when = now.toLocaleString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
+    const day = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-" + String(now.getDate()).padStart(2, "0");
+    const lines = ["RIPPER - interview record", "Candidate: " + candidate, "Role: " + role, "Date: " + when,
+      "Everything above the transcript is AI-written from the role, the resume, what the mic heard and what the recruiter typed. Check it against the transcript."];
+    if (W.payHistory) lines.push("Heads up: the candidate volunteered pay history, and it's in the transcript below. Don't rely on it - many places bar using it.");
     lines.push("");
-    lines.push("QUESTIONS SERVED, WITH NOTES");
+    if (W.comp) lines.push("COMP", W.comp, "");
+    if (W.open && W.open.length) lines.push("OPEN ITEMS", ...W.open.map(o => "- " + o), "");
+    if (W.rollup && W.rollup.length) {
+      lines.push("REQUIREMENTS");
+      W.rollup.forEach(r => {
+        const w = (P.walk || []).find(x => x.requirement.trim().toLowerCase() === r.requirement.trim().toLowerCase());
+        lines.push("- " + (w ? "[" + w.fit + "] " : "") + r.requirement + ": " + r.heard);
+      });
+      lines.push("");
+    }
+    lines.push("QUESTIONS, WHAT WAS HEARD, NOTES", "(everything the mic heard from each question to the next - both voices, unlabeled)", "");
     T.asked.forEach((a, i) => {
+      const next = T.asked[i + 1];
+      const answer = a.at != null ? T.finalText.slice(a.at, next && next.at != null ? next.at : undefined).trim() : "";
       lines.push((i + 1) + ". " + a.question);
-      if (a.note) lines.push("   note: " + a.note);
+      lines.push("   Heard: " + (answer ? answer.replace(/\n/g, "\n          ") : "(nothing heard or typed)"));
+      if (a.note) lines.push("   Note: " + a.note);
+      (a.theyAsked || []).forEach(x => lines.push("   They asked: " + x.q + (x.a ? " - " + x.a : "")));
+      lines.push("");
     });
-    lines.push("");
-    lines.push("FULL TRANSCRIPT");
+    lines.push("FULL TRANSCRIPT (as heard, unlabeled; [typed] marks lines the recruiter typed)");
     lines.push(T.finalText || "(empty)");
     const blob = new Blob([lines.join("\n")], { type: "text/plain" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = "ripper_record.txt";
+    a.download = "ripper_" + slug(candidate, "candidate") + "_" + slug(role, "role") + "_" + day + ".txt";
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   });
@@ -1565,7 +1690,7 @@ ${T.finalText.slice(-6000) || "(nothing yet)"}`;
     const msg = (leaving || reTap) ? atStake() : "";
     if (msg) {
       if (!confirm(msg)) { if (leaving) history.replaceState(null, "", "#recruiters"); return; }  // stay put: nothing else moves
-      if (T.listening) stopListening();
+      if (T.listening || T.paused) stopListening();  // paused counts: nothing carries into the next interview
       L.phase = "idle"; setMode("interview");  // OK: end the call the dialog just said would end
     }
     settled = location.hash;
