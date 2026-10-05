@@ -352,6 +352,11 @@
 
 
   /* ---------- paged live flow (recruiter) ---------- */
+  #liveView, #planPanel, #recordWrap { scroll-margin-top: 60px; }  /* land below the listening badge */
+  .meter { display: inline-flex; align-items: flex-end; gap: 3px; height: 18px; flex: none; }
+  .meter i { display: block; width: 4px; height: 18px; background: var(--rule); transform-origin: bottom; transform: scaleY(.15); transition: transform 60ms linear; }
+  .meter.hearing i { background: var(--red); }
+  .micgate { margin: 0 0 18px; }
   .livecue {
     position: fixed;
     top: calc(12px + env(safe-area-inset-top, 0px));
@@ -393,7 +398,7 @@
     </div>
   </header>
 
-  <div class="livecue" id="liveCue" role="status" hidden><span class="dot live" id="cueDot"></span><span id="cueText">listening</span></div>
+  <div class="livecue" id="liveCue" role="status" hidden><span class="dot live" id="cueDot"></span><span id="cueText">listening</span><span class="meter" id="cueMeter" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span></div>
   <div class="sheet">
     <section id="home" class="view">
       <section class="pitch">
@@ -461,11 +466,12 @@
         <h2>The plan</h2>
         <div class="livebar" id="livebar" hidden>
           <button id="listen">Start listening</button>
-          <button id="grade" class="quiet" hidden>I'm done - grade me</button>
+          <button id="grade" class="quiet" hidden>I'm done - next question</button>
           <button id="skip" class="quiet" hidden>Skip</button>
           <button id="refresh" class="quiet" disabled>Fresh questions</button>
           <label class="voicerow" id="voiceRow" hidden><input type="checkbox" id="voice" checked> Ripper speaks</label>
-          <span class="status" id="status"><span class="dot" id="dot"></span><span id="statusText">Plan ready. Start when the call does.</span></span>
+          <span class="status" id="status"><span class="dot" id="dot"></span><span class="meter" id="statusMeter" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><span id="statusText">Plan ready. Start when the call does.</span></span>
+          <button id="finishPractice" class="quiet" type="button" hidden>Finish - see Ripper's notes</button>
         </div>
         <div class="stage" id="stage" hidden>
           <p class="stageprog" id="stageProg" hidden></p>
@@ -492,6 +498,10 @@
       </div>
 
       <div class="panel" id="liveView" hidden>
+        <div class="gobar micgate" id="micGate" hidden>
+          <button id="startMic" type="button">Start listening</button>
+          <span class="status"><span id="micGateText">The mic is off. Tell the candidate Ripper is listening and taking notes, ask if that's all right, then start.</span></span>
+        </div>
         <div id="poolWrap" hidden>
           <p class="dealnote" id="dealNote" hidden></p>
           <h2>Ask one of these</h2>
@@ -513,6 +523,10 @@
           <div class="gobar">
             <button id="nextPool" type="button">Next questions</button>
             <span class="status"><span id="serveStatusText">Listening. When the answer lands, deal the next three.</span></span>
+          </div>
+          <div class="addline">
+            <input id="liveManual" placeholder="Type what was said, if the microphone missed it" aria-label="Type what was said">
+            <button class="quiet" id="liveAdd" type="button">Add</button>
           </div>
           <p class="finebar"><button class="linklike" id="finish2" type="button">finish the interview</button></p>
         </div>
@@ -621,12 +635,14 @@
     recordAsked: $("recordAsked"), downloadRec: $("downloadRec"),
     cueDot: $("cueDot"), cueText: $("cueText"), poolNote: $("poolNote"), recordNote: $("recordNote"),
     dealNote: $("dealNote"), consentNote: $("consentNote"), planBack: $("planBack"), planBackBtn: $("planBackBtn"),
+    micGate: $("micGate"), startMic: $("startMic"), micGateText: $("micGateText"), liveManual: $("liveManual"), liveAdd: $("liveAdd"),
+    finishPractice: $("finishPractice"),
   };
   document.getElementById("duckroomImg").src = document.querySelector(".hero-img").src;
 
   // ---------- provider ----------
   // PINNED on purpose - read before changing. claude-sonnet-4-6 runs without thinking when the request
-  // sends no "thinking" field, so this file's small max_tokens budgets hold: plan 3500, notes pass 1400,
+  // sends no "thinking" field, so this file's small max_tokens budgets hold: plan 4500, notes pass 1400,
   // deal 700, practice grade 500. claude-sonnet-5-5 and claude-opus-5-5 think by default and the thinking
   // spends max_tokens, so changing this string alone gets replies cut off at the token limit. Sonnet 5.5
   // answers {type: "disabled"} with a 400 - it turns thinking off with thinking: {type: "between_tools"}
@@ -714,10 +730,10 @@
 
   // ---------- mode: interviewing vs practicing ----------
   const M = { mode: "interview" };
-  const PQ = { list: [], idx: 0, phase: "idle", qStart: 0, ask: 0 };  // practice queue; ask counts each asking
+  const PQ = { list: [], idx: 0, phase: "idle", qStart: 0, ask: 0, reveal: false };  // practice queue; ask counts each asking; reveal shows the notes
   function setMode(m) {
     if (m !== "interview" && m !== "practice") return;
-    if (m === M.mode && (T.listening || L.phase === "pool" || L.phase === "serving")) return;  // never reset a live session from a stray tap, even after the mic dropped
+    if (m === M.mode && (T.listening || L.phase === "pool" || L.phase === "serving" || (m === "practice" && PQ.list.length && PQ.phase !== "done"))) return;  // never reset a live session (or a practice run) from a stray tap, even after the mic dropped
     if (T.listening) stopListening();
     M.mode = m;
     el.prepTitle.textContent = m === "interview" ? "The recruiter's chair" : "The practice chair";
@@ -737,7 +753,9 @@
     if (m === "interview") { el.stage.hidden = true; el.grade.hidden = true; el.skip.hidden = true; }
     el.planSections.hidden = m === "practice";
     el.nowWrap.hidden = true;
-    el.go.textContent = m === "interview" ? "Start the interview" : "Build the interview plan";
+    el.go.textContent = m === "interview" ? "Build the plan" : "Build the interview plan";
+    el.micGate.hidden = true; el.finishPractice.hidden = true;
+    if (!el.go.disabled) setPrep("", false);  // a status from the other chair (or the last plan) doesn't belong here - a build in flight keeps its line
     const micNote = document.getElementById("micNote"); if (micNote) micNote.hidden = m === "practice";
     el.consentNote.hidden = m === "practice";  // the candidate is the one talking in the practice chair
     el.livebar.hidden = m === "interview";
@@ -749,6 +767,11 @@
     el.planPanel.hidden = true;
     L.phase = "idle";
     if (T.plan) setStatus(m === "interview" ? "Plan ready. Start when the call does." : "Plan ready. Start when you are - Ripper asks first.", false);
+    if (m === "practice" && PQ.list.length) {  // coming back to a practice run picks up where it left off
+      el.planPanel.hidden = false;
+      if (PQ.phase === "done") setStatus("Run finished. Start practicing for a fresh run.", false);
+      else if (PQ.phase !== "idle") setStatus("Paused. Start practicing to pick up where you left off.", false);
+    }
   }
   window.ripperSetMode = setMode;
 
@@ -803,30 +826,21 @@
   function buildQueue() {
     PQ.list = []
       .concat(T.plan.opening || [], T.plan.background || [],
-        (T.plan.walk || []).map(w => ({ question: w.question, why: w.why })));
-    PQ.idx = 0; PQ.phase = "idle";
+        (T.plan.walk || []).map(w => ({ question: w.question, why: w.why })), T.plan.logistics || []);
+    PQ.idx = 0; PQ.phase = "idle"; PQ.reveal = false;
   }
   function showPracticeQ() {
     const q = PQ.list[PQ.idx];
     el.stage.hidden = false;
     el.coachnote.hidden = true; el.coachnote.textContent = "";
-    if (!q) {
-      el.stageProg.hidden = true;
-      el.stageLead.textContent = "Ripper says:";
-      el.bigq.textContent = "That's the whole plan. Run it again, or rebuild with a sharper resume.";
-      el.stageBeat.hidden = true;
-      el.grade.hidden = true; el.skip.hidden = true;
-      PQ.phase = "done";
-      setStatus("Practice run complete. The graded record is under Asked.", T.listening);
-      return;
-    }
+    if (!q) { endRun("That's the whole plan."); return; }
     el.stageProg.hidden = false;
     el.stageProg.textContent = "Question " + (PQ.idx + 1) + " of " + PQ.list.length;
     el.stageLead.textContent = q.lead || "Ripper asks:";
     el.bigq.textContent = q.question;
     el.stageBeat.hidden = !q.beat;
     el.stageBeat.textContent = q.beat ? "(" + q.beat + ")" : "";
-    el.grade.hidden = false; el.grade.textContent = "I'm done - grade me";
+    el.grade.hidden = false; el.grade.textContent = "I'm done - next question";
     el.skip.hidden = false;
     PQ.phase = "answering"; PQ.ask++;
     if (el.voice.checked) hush();  // he's about to talk: mic off first, so the last answer's tail stays with the last answer
@@ -835,21 +849,47 @@
     speakStaged(q);
   }
   function advancePractice() { PQ.idx += 1; showPracticeQ(); }
+  function revealNotes() {
+    PQ.reveal = true; renderAsked();
+    if (T.asked.length) el.askedHead.scrollIntoView({ behavior: "smooth", block: "start" });
+    return T.asked.filter(a => a.note).length;
+  }
+  function endRun(lead) {  // the end of a practice run: mic off, notes out
+    if (T.listening) stopListening();
+    el.stageLead.textContent = "Ripper says:";
+    el.stageProg.hidden = true; el.stageBeat.hidden = true;
+    el.grade.hidden = true; el.skip.hidden = true; el.finishPractice.hidden = true;
+    PQ.phase = "done";
+    const n = revealNotes();
+    el.bigq.textContent = lead + " " + (n ? "Ripper's notes on your answers are below." : "Nothing was answered, so there are no notes yet.");
+    setStatus(n ? "Finished. Ripper's notes are under Asked." : "Finished.", false);
+  }
+  el.finishPractice.addEventListener("click", async () => {
+    el.grade.hidden = true; el.skip.hidden = true; el.finishPractice.hidden = true;
+    PQ.finishing = true;
+    if (T.interim) { const t = T.interim; T.interim = ""; commit(t); }  // words still being recognized belong to this answer
+    const pending = PQ.phase === "answering" && T.finalText.slice(PQ.qStart).trim();
+    if (T.listening) stopListening();
+    if (T.busy && PQ.grading) { setStatus("Ripper is reading your last answer\u2026", false); await PQ.grading; }
+    else if (pending) { setStatus("Ripper is reading your last answer\u2026", false); await gradePractice(); }
+    PQ.finishing = false;
+    endRun("Here's where you stopped.");
+  });
   el.skip.addEventListener("click", () => { if (PQ.phase !== "done") advancePractice(); });
 
-  const PRACTICE_SYSTEM = `You are Ripper, a practice interviewer coaching a candidate out loud between questions. You see the role, the candidate's resume, the question you just asked, and the transcript of their spoken answer.
+  const PRACTICE_SYSTEM = `You are Ripper, a practice interviewer. The candidate answers out loud, and your notes are saved for the end of the session - they don't hear them between questions. You see the role, the candidate's resume, the question you just asked, and the transcript of their spoken answer.
 
 Two jobs:
-1. NOTE: one or two lines on the answer as evidence, spoken to "you". What it gave, what it didn't. Register: "you gave the team's result - claim your part with a number", "good name-drop of the tool, but what did you build with it", "you answered a different question". Honest, specific, never cruel, never a score.
+1. NOTE: one or two lines on the answer as evidence, written to "you" for the end of the session. What it gave, what it didn't. Register: "you gave the team's result - claim your part with a number", "good name-drop of the tool, but what did you build with it", "you answered a different question". Honest, specific, never cruel, never a score.
 2. DECIDE: if the answer was vague, evidence-free, or dodged, write ONE follow-up question to press it. If the answer did its job, no follow-up.
 
-A follow-up may carry "lead" - one spoken bridge that acknowledges their answer before pressing ("Okay - you mentioned the rollout took a quarter...") - and "beat" - a delivery note ("then wait").
+A follow-up may carry "lead" - one spoken bridge from what they said, the way a real interviewer would, never a verdict on the answer ("Okay - you mentioned the rollout took a quarter...") - and "beat" - a delivery note ("then wait").
 
 Return ONLY JSON, no prose, no code fences:
 {"note":"...","followup":{"question":"...","why":"...","lead":"...","beat":"..."}} or {"note":"...","followup":null}`;
 
   async function gradePractice() {
-    if (PQ.phase !== "answering") { if (PQ.phase === "noted") advancePractice(); return; }
+    if (PQ.phase !== "answering") return;
     const q = PQ.list[PQ.idx];
     const answer = (T.finalText.slice(PQ.qStart) + " " + T.interim).trim();  // words still being recognized count
     if (!answer) { setStatus("Say your answer first - or Skip.", T.listening, true); return; }
@@ -874,27 +914,24 @@ ${answer.slice(0, 3000)}`;
       const parsed = parseJSON(raw);
       if (!same()) return;  // the recruiter chair took over while this was grading
       const note = (typeof parsed.note === "string" && tidy(parsed.note)) || "noted.";
-      if (PQ.ask !== asking || PQ.phase !== "answering") {  // asked again meanwhile: keep the note, don't talk over the new answer
-        T.asked.push({ question: q.question, why: q.why || "", note }); renderAsked(); return;
-      }
-      el.coachnote.textContent = note; el.coachnote.hidden = false;
-      T.asked.push({ question: q.question, why: q.why || "", note });
+      T.asked.push({ question: q.question, why: q.why || "", note });  // kept for the end of the run, not said now
       renderAsked();
-      speak(note);
+      if (PQ.ask !== asking || PQ.phase !== "answering") return;  // asked again meanwhile: keep the note, leave the new answer alone
       if (parsed.followup && parsed.followup.question) {
-        PQ.list.splice(PQ.idx + 1, 0, parsed.followup);
+        PQ.list.splice(PQ.idx + 1, 0, parsed.followup);  // a real interviewer presses - that's a question, not a critique
       }
-      PQ.phase = "noted";
-      el.grade.textContent = "Next question";
-      setStatus("Note's in. Next when you're ready.", T.listening);
+      if (PQ.finishing) return;  // Finish is waiting on this note - no next question
+      if (!T.listening) { PQ.idx += 1; PQ.phase = "paused"; return; }  // stopped meanwhile: move on quietly, ask when they start again
+      setStatus("Practicing. Answer out loud, then tap I'm done.", T.listening);
+      advancePractice();
     } catch (err) {
-      if (same()) setStatus("Couldn't grade that one (" + err.message + "). Try again or Skip.", T.listening, true);
+      if (same() && !PQ.finishing) setStatus("Couldn't grade that one (" + err.message + "). Try again or Skip.", T.listening, true);
     } finally {
       if (T.asked === askedRef) T.busy = false;  // a new interview's plan build already reset it
       el.grade.disabled = false; el.skip.disabled = false;
     }
   }
-  el.grade.addEventListener("click", gradePractice);
+  el.grade.addEventListener("click", () => { PQ.grading = gradePractice(); });
 
   // ---------- status ----------
   function setPrep(text, live = false, err = false) {
@@ -914,26 +951,31 @@ ${answer.slice(0, 3000)}`;
 Shape of the plan:
 1. "opening" - 2 or 3 questions that open the call like a human: small talk with a purpose, drawn from something real on the resume (a place, a project, an interest, an unusual turn in the history). Establish connection, get a feel for the person. Never generic.
 2. "background" - 2 or 3 questions that walk the work history: why the moves, what they were actually responsible for, what they're looking for now.
-3. "walk" - the role, requirement by requirement. Distill the job description into its 5 to 9 real requirements (what would actually rule someone in or out - not every bullet). For each: judge the resume's fit as one of "strong" (clear direct evidence), "partial" (some evidence, thin), "transferable" (no direct match, but a different experience exercises the same muscle - name the bridge), or "gap" (nothing on the page). Quote the shortest honest evidence clause from the resume, or write "not on the page". Then write the one question that tests it - evidence-seeking: numbers, names, what they personally did, what broke.
+3. "walk" - the role, requirement by requirement. Distill the job description into its 5 to 10 real requirements (what would actually rule someone in or out - not every bullet). Cover every distinct area of the job, and count stated preferences (an industry, a tool, a domain) and numeric targets (a retention rate, a quota, a ratio) as requirements too. For each: judge the resume's fit as one of "strong" (clear direct evidence), "partial" (some evidence, thin), "transferable" (no direct match, but a different experience exercises the same muscle - name the bridge), or "gap" (nothing on the page). Quote the shortest honest evidence clause from the resume, or write "not on the page". Then write the one question that tests it - evidence-seeking: numbers, names, what they personally did, what broke.
+4. "logistics" - 2 to 4 short practical questions every recruiter screen covers, drawn from the posting: pay expectations against the posted range (quote the range only if the posting gives one), start date or notice period, the location, hybrid or travel arrangement the posting states, and work authorization if the posting raises it. Ask about pay expectations only, never current or past salary, and ask only whether they're authorized to work there, never about citizenship, nationality, age, family or health. Plain and respectful, no lead.
 
-Rules: every question is one sentence a person can read mid-call. A "transferable" judgment must say what transfers in its why. Do not flatter the candidate or pad the plan.
+Rules: every question is one sentence a person can read mid-call. A "transferable" judgment must say what transfers in its why. Do not flatter the candidate or pad the plan. State only facts that are in the role or the resume - never invent numbers, percentages or claims, in a question or in a lead. Work out dates and durations from TODAY.
 
 Stage directions: this plan will be performed as a conversation, not read as a list. For any question that needs it, add "lead" - one natural bridge sentence to say out loud before the question ("I saw the move from St. Louis to New York on your resume...") - and "beat" - a short direction for after it ("pause - let them fill the silence", "don't rescue them", "if they laugh, let it run"). Write them like a producer's margin notes: human, sparing, specific. Opening questions almost always deserve a lead. A question that stands alone gets neither - empty string.
 
 Return ONLY JSON, no prose, no code fences:
-{"opening":[{"question":"...","why":"...","lead":"...","beat":"..."}],"background":[{"question":"...","why":"...","lead":"...","beat":"..."}],"walk":[{"requirement":"...","fit":"strong|partial|transferable|gap","evidence":"...","question":"...","why":"...","lead":"...","beat":"..."}]}`;
+{"opening":[{"question":"...","why":"...","lead":"...","beat":"..."}],"background":[{"question":"...","why":"...","lead":"...","beat":"..."}],"walk":[{"requirement":"...","fit":"strong|partial|transferable|gap","evidence":"...","question":"...","why":"...","lead":"...","beat":"..."}],"logistics":[{"question":"...","why":"..."}]}`;
 
   async function buildPlan() {
     const jd = el.jd.value.trim(), resume = el.resume.value.trim();
     if (!jd) { setPrep("Paste the role first.", false, true); el.jd.focus(); return; }
     if (!resume) { setPrep("Paste the candidate's resume.", false, true); el.resume.focus(); return; }
     T.busy = true; el.go.disabled = true;
-    setPrep("Reading the role against the resume\u2026", true);
-    const user = `THE ROLE:\n${jd.slice(0, 6000)}\n\nTHE CANDIDATE'S RESUME:\n${resume.slice(0, 6000)}`;
+    setPrep("Reading the role against the resume - this takes about a minute\u2026", true);
+    const today = new Date().toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+    const user = `TODAY: ${today}\n\nTHE ROLE:\n${jd.slice(0, 12000)}\n\nTHE CANDIDATE'S RESUME:\n${resume.slice(0, 12000)}`;  // pay, location and authorization often sit at the end of a posting
     try {
-      const raw = await callModel(PREP_SYSTEM, user, 3500);
+      const raw = await callModel(PREP_SYSTEM, user, 4500);
       const plan = parseJSON(raw);
-      if (!plan.walk || !plan.walk.length) throw new Error("empty plan");
+      ["opening", "background", "walk", "logistics"].forEach(k => {  // every group is a list of questions, whatever shape the model sent
+        plan[k] = (Array.isArray(plan[k]) ? plan[k] : []).filter(q => q && typeof q.question === "string" && q.question);
+      });
+      if (!plan.walk.length) throw new Error("empty plan");
       T.plan = plan;
       T.asked = []; T.now = []; T.lastSent = ""; renderAsked(); renderNow();
       T.finalText = ""; T.interim = ""; renderTranscript();  // a new plan is a new session - never carry the last candidate's words
@@ -948,6 +990,7 @@ Return ONLY JSON, no prose, no code fences:
         el.planPanel.scrollIntoView({ behavior: "smooth", block: "start" });
       } else {
         setPrep("Plan built. Dealing your first questions.", false);
+        PQ.list = []; PQ.idx = 0; PQ.phase = "idle";  // a recruiter plan isn't a practice run
         startInterviewLive();
       }
     } catch (err) {
@@ -995,6 +1038,7 @@ Return ONLY JSON, no prose, no code fences:
         el.planSections.append(row);
       });
     }
+    sec("Logistics", T.plan.logistics);
   }
   function markPlanButtons() {
     el.planSections.querySelectorAll("button.q").forEach(b => {
@@ -1017,10 +1061,11 @@ Return ONLY JSON, no prose, no code fences:
   function renderAsked() {
     el.askedHead.hidden = T.asked.length === 0;
     el.asked.innerHTML = "";
-    T.asked.slice(-8).forEach(a => {
+    const showNotes = M.mode !== "practice" || PQ.reveal;  // practice: notes wait for the end of the run
+    (showNotes && M.mode === "practice" ? T.asked : T.asked.slice(-8)).forEach(a => {
       const li = document.createElement("li");
       li.innerHTML = '<span class="aq">' + escapeHtml(a.question) + "</span>"
-        + (a.note ? '<span class="note">' + escapeHtml(a.note) + "</span>" : "");
+        + (a.note && showNotes ? '<span class="note">' + escapeHtml(a.note) + "</span>" : "");
       el.asked.append(li);
     });
   }
@@ -1063,6 +1108,48 @@ Return ONLY JSON, no prose, no code fences:
     setStatus("Preview mode: the microphone is blocked inside this frame. Plan-building works; listening needs the real page.", false);
   }
 
+  // ---------- the mic meter: proof the mic is hearing sound ----------
+  // Speech recognition doesn't report levels, so a second, local-only reading of the mic drives the bars.
+  // Nothing from it leaves the page. It moves only while recognition is actually running.
+  const MTR = { stream: null, ctx: null, an: null, buf: null, timer: null, level: 0, pending: false };
+  async function meterOn() {
+    if (MTR.stream || MTR.pending || !(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) return;
+    MTR.pending = true;
+    try {
+      // no voice processing: it can duck the call audio coming through the speakers
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+      MTR.pending = false;
+      if (!T.listening) { stream.getTracks().forEach(t => t.stop()); return; }  // stopped while the mic was being asked for
+      const AC = window.AudioContext || window.webkitAudioContext;
+      MTR.stream = stream; MTR.ctx = new AC();
+      MTR.an = MTR.ctx.createAnalyser(); MTR.an.fftSize = 1024;
+      MTR.ctx.createMediaStreamSource(stream).connect(MTR.an);
+      MTR.buf = new Uint8Array(MTR.an.fftSize);
+      if (MTR.ctx.state === "suspended") MTR.ctx.resume().catch(() => {});
+      MTR.timer = setInterval(meterTick, 60);
+    } catch (_) { MTR.pending = false; meterOff(); }
+  }
+  function meterTick() {
+    if (!MTR.an) return;
+    MTR.an.getByteTimeDomainData(MTR.buf);
+    let sum = 0; for (let i = 0; i < MTR.buf.length; i++) { const v = (MTR.buf[i] - 128) / 128; sum += v * v; }
+    MTR.level = T.rec ? Math.max(Math.sqrt(sum / MTR.buf.length) * 4, MTR.level * 0.8) : 0;  // quick up, gentle down; nothing banked while paused
+    drawMeter(Math.min(1, MTR.level));
+  }
+  function meterOff() {
+    clearInterval(MTR.timer); MTR.timer = null;
+    if (MTR.stream) MTR.stream.getTracks().forEach(t => t.stop());
+    if (MTR.ctx) MTR.ctx.close().catch(() => {});
+    MTR.stream = MTR.ctx = MTR.an = null; MTR.level = 0;
+    drawMeter(0);
+  }
+  function drawMeter(level) {
+    document.querySelectorAll(".meter").forEach(m => {
+      m.classList.toggle("hearing", level > 0.08);
+      [...m.children].forEach((bar, i) => { bar.style.transform = "scaleY(" + Math.max(0.15, Math.min(1, level * (1.3 - Math.abs(i - 2) * 0.25))).toFixed(2) + ")"; });
+    });
+  }
+
   function cue(text, live) {
     el.cueText.textContent = text;
     el.cueDot.classList.toggle("live", live);
@@ -1072,6 +1159,7 @@ Return ONLY JSON, no prose, no code fences:
     const r = new SR();
     r.continuous = true; r.interimResults = true; r.lang = "en-US";
     r.onresult = (e) => {
+      if (M.mode === "interview" && el.cueText.textContent !== "listening") cue("listening", true);  // words again: the hiccup is over
       let interim = "";
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const res = e.results[i];
@@ -1081,16 +1169,18 @@ Return ONLY JSON, no prose, no code fences:
       T.interim = interim; renderTranscript();
     };
     r.onerror = (e) => {
-      if (e.error === "not-allowed") { stopListening(); setStatus("Microphone access was blocked. Allow it in the address bar and start again.", false, true); cue("not listening - microphone blocked", false); }
-      else if (e.error === "audio-capture") { stopListening(); setStatus("No microphone found. Connect one and start again.", false, true); cue("not listening - no microphone found", false); }
+      if (e.error === "not-allowed") { stopListening(); setStatus("Microphone access was blocked. Allow it in the address bar and start again.", false, true); cue("not listening - microphone blocked", false); micFailed("The mic was blocked. Allow it in the address bar, then start again."); }
+      else if (e.error === "audio-capture") { stopListening(); setStatus("No microphone found. Connect one and start again.", false, true); cue("not listening - no microphone found", false); micFailed("No microphone found. Connect one, then start again."); }
+      else if (e.error === "service-not-allowed") { stopListening(); setStatus("The browser's speech service is off. Use Chrome and start again.", false, true); cue("not listening - speech service unavailable", false); micFailed("This browser's speech service is off. Use Chrome, or type what was said below."); }
       else if (e.error === "no-speech") { /* quiet stretches are normal */ }
-      else setStatus("Recognizer hiccup: " + e.error + ". Still listening.", true);
+      else { setStatus("Recognizer hiccup: " + e.error + ". Still listening.", true); if (M.mode === "interview") cue("listening - reconnecting (" + e.error + ")", true); }
     };
     r.onend = () => { if (T.listening) { try { r.start(); } catch (_) {} } };
     try { r.start(); } catch (err) {
       stopListening();
       setStatus("The browser refused the microphone (" + (err.message || err.name) + "). On the real page or localhost this works.", false, true);
       cue("not listening - the browser refused the microphone", false);
+      micFailed("The browser refused the microphone. Allow it, then start again.");
       return;
     }
     T.rec = r;
@@ -1105,10 +1195,11 @@ Return ONLY JSON, no prose, no code fences:
       startRec();
       T.timer = setInterval(tick, 20000);
     } else {
-      if (!PQ.list.length) buildQueue();
-      startRec();
-      setStatus("Practicing. Answer out loud; grade when you're done.", true);
-      const ask = () => (PQ.phase === "noted" ? advancePractice() : showPracticeQ());  // a graded question moves on
+      if (!PQ.list.length || PQ.phase === "done") { if (PQ.phase === "done") T.asked = []; buildQueue(); renderAsked(); }  // a fresh run starts its own record
+      startRec(); if (T.rec) meterOn();
+      el.finishPractice.hidden = false;
+      setStatus("Practicing. Answer out loud, then tap I'm done.", true);
+      const ask = () => showPracticeQ();
       const r = T.rec;
       if (el.voice.checked && r) {
         // ask once the mic is really up, so Chrome's permission prompt and mic errors come before Ripper talks
@@ -1125,7 +1216,7 @@ Return ONLY JSON, no prose, no code fences:
     if (T.rec) { try { T.rec.onend = null; T.rec.stop(); } catch (_) {} T.rec = null; }
     T.interim = ""; renderTranscript();
     el.listen.textContent = M.mode === "interview" ? "Start listening" : "Start practicing";
-    quiet();
+    quiet(); meterOff();
     setStatus("Stopped. Transcript kept; start again to continue.", false);
   }
   el.listen.addEventListener("click", () => T.listening ? stopListening() : startListening());
@@ -1158,6 +1249,7 @@ Return ONLY JSON, no prose, no code fences:
     if (!T.plan) return "";
     const lines = [];
     (T.plan.walk || []).forEach(w => lines.push("- [" + w.fit + "] " + w.requirement + " -> " + w.question));
+    (T.plan.logistics || []).forEach(q => lines.push("- [logistics] " + q.question));
     return lines.join("\n");
   }
 
@@ -1197,12 +1289,12 @@ ${T.finalText.slice(-6000) || "(nothing yet)"}`;
   }
 
   // ---------- paged live flow (recruiter) ----------
-  const DEAL_SYSTEM = `You are Ripper, a recruiter's listening companion, live inside an interview. You receive the role, the interview plan, what has been asked, and the transcript so far. Two jobs. First, NOTE: one line on the LAST ANSWER - the answer to the last question in ASKED SO FAR - as evidence: what it gave or didn't. Register: "gave a number and a name", "described the team's work, not their own", "answered a different question", "named the tool but not what they built with it". A note, never a score, never advice. Judge it against the question that was asked, not the whole role, and credit what it did give before naming what's missing. Keep it under 15 words. If LAST ANSWER says to leave the note empty, or holds no real answer yet, the note is an empty string. Second, DEAL the next three questions the interviewer should have in hand. Follow the energy of the most recent answer: press where it dodged, cash in what it offered, or advance the plan's arc where the ground is covered. Prefer pressing an unanswered dodge over moving on. Every question must be askable aloud in one breath. A question may carry a short spoken lead-in ("lead") bridging from what was just said, and a stage direction ("beat") for delivery - sparing, like a producer's margin note. Reply ONLY with JSON, no prose, no markdown: {"note":"...","now":[{"question":"...","lead":"...","beat":"..."}]} - up to 3 items; lead and beat optional.`;
-  const L = { phase: "idle" };
+  const DEAL_SYSTEM = `You are Ripper, a recruiter's listening companion, live inside an interview. You receive the role, the interview plan, what has been asked, and the transcript so far. Two jobs. First, NOTE: one line on the LAST ANSWER - the answer to the last question in ASKED SO FAR - as evidence: what it gave or didn't. Register: "gave a number and a name", "described the team's work, not their own", "answered a different question", "named the tool but not what they built with it". A note, never a score, never advice. Judge it against the question that was asked, not the whole role, and credit what it did give before naming what's missing. Keep it under 15 words. If LAST ANSWER says to leave the note empty, or holds no real answer yet, the note is an empty string. Second, DEAL the next three questions the interviewer should have in hand. Follow the energy of the most recent answer: press where it dodged, cash in what it offered, or advance the plan's arc where the ground is covered. Prefer pressing an unanswered dodge over moving on. Every question must be askable aloud in one breath. A question may carry a short spoken lead-in ("lead") bridging from what was just said, and a stage direction ("beat") for delivery - sparing, like a producer's margin note. Leads and questions state only what the role, the plan or the transcript says - never invent numbers or claims. Never ask about salary history, citizenship, nationality, age, family, health or any other protected topic. Reply ONLY with JSON, no prose, no markdown: {"note":"...","now":[{"question":"...","lead":"...","beat":"..."}]} - up to 3 items; lead and beat optional.`;
+  const L = { phase: "idle", saved: false };  // saved: this interview's record was downloaded
   function arcList() {
     if (!T.plan) return [];
     return [].concat(T.plan.opening || [], T.plan.background || [],
-      (T.plan.walk || []).map(w => ({ question: w.question, why: w.why, lead: w.lead, beat: w.beat })));
+      (T.plan.walk || []).map(w => ({ question: w.question, why: w.why, lead: w.lead, beat: w.beat })), T.plan.logistics || []);
   }
   function nextFromPlan(n) {
     return arcList().filter(q => !T.asked.some(a => a.question === q.question)).slice(0, n);
@@ -1241,25 +1333,60 @@ ${T.finalText.slice(-6000) || "(nothing yet)"}`;
     el.serveQ.textContent = q.question;
     el.serveBeat.hidden = !q.beat;
     el.serveBeat.textContent = q.beat ? "(" + q.beat + ")" : "";
-    el.serveStatusText.textContent = "Listening. When the answer lands, deal the next three.";
+    serveStatus();
     el.serveWrap.hidden = false;
   }
   function startInterviewLive() {
     setPrep("", false);
-    T.listening = true;
-    cue("listening", true);
-    startRec();
     el.prepPanel.hidden = true;
     el.planPanel.hidden = true;
     el.liveView.hidden = false;
-    el.liveCue.hidden = false;
+    el.liveCue.hidden = true;   // nothing is listening yet
+    el.micGateText.textContent = "The mic is off. Tell the candidate Ripper is listening and taking notes, ask if that's all right, then start.";
+    el.micGate.hidden = false;  // the consent line asks first; the mic waits for this press
+    el.liveManual.value = ""; el.liveManual.disabled = false; el.liveAdd.disabled = false;
+    L.saved = false;
     el.nextPool.disabled = false;
     showPool(nextFromPlan(3));
   }
+  function startLiveMic() {
+    el.micGate.hidden = true;
+    el.liveCue.hidden = false;
+    if (!SR) {
+      cue("not listening - this browser has no speech recognition; use Chrome", false);
+      micFailed("This browser can't listen. Use Chrome, or type what was said below.");
+      return;
+    }
+    T.listening = true;
+    cue("listening", true);
+    startRec();
+    if (T.rec) meterOn();  // only when a recognizer actually started
+    serveStatus();
+  }
+  function serveStatus(extra) {  // the line under a served question always says what the mic is doing
+    if (L.phase !== "serving") return;
+    el.serveStatusText.textContent = (extra ? extra + " " : "") + (T.listening ? "Listening. When the answer lands, deal the next three."
+      : "The mic is off - start listening above, or type what was said below.");
+  }
+  el.startMic.addEventListener("click", startLiveMic);
+  function micFailed(text) {  // recruiter chair: the mic stopped - offer the start button again
+    if (M.mode !== "interview" || !(L.phase === "pool" || L.phase === "serving")) return;
+    el.micGateText.textContent = text; el.micGate.hidden = false;
+    serveStatus();
+  }
+  function addLiveLine() {
+    const t = el.liveManual.value.trim(); if (!t) return;
+    commit(t); el.liveManual.value = "";
+    serveStatus("Added. Ripper reads it with the answer.");
+  }
+  el.liveAdd.addEventListener("click", addLiveLine);
+  el.liveManual.addEventListener("keydown", e => { if (e.key === "Enter") addLiveLine(); });
   async function gradeAndDeal(fromPhase) {
     if (T.busy) return;
+    if (fromPhase === "serving") addLiveLine();  // a line typed but not added still belongs to this answer
     T.busy = true;
     el.nextPool.disabled = true;
+    el.liveManual.disabled = true; el.liveAdd.disabled = true;  // a line typed now would belong to no answer
     const askedRef = T.asked, target = T.asked.length - 1;  // the answer this deal notes; a new session swaps T.asked out
     const same = () => T.asked === askedRef;                  // still the interview this deal was asked for?
     const last = askedRef[target];
@@ -1303,6 +1430,7 @@ ${lastAnswer}`;
     } finally {
       if (!same()) return;  // a new interview owns T.busy and the buttons now
       T.busy = false; el.nextPool.disabled = false;
+      el.liveManual.disabled = false; el.liveAdd.disabled = false;
       // finished while this deal was in flight: the record stays up, shows this deal's note, and still gets the rest
       if (L.phase === "record") { renderRecord(); gradeAndDealFinal(); }
     }
@@ -1333,12 +1461,14 @@ ${lastAnswer}`;
     });
   }
   function finishInterview() {
+    if (L.phase === "serving") addLiveLine();  // a typed last answer isn't dropped
     stopListening();
     el.liveCue.hidden = true;
-    el.poolWrap.hidden = true; el.serveWrap.hidden = true; el.planPanel.hidden = true;
+    el.poolWrap.hidden = true; el.serveWrap.hidden = true; el.planPanel.hidden = true; el.micGate.hidden = true;
     el.recordNote.hidden = true;
     renderRecord();
     el.recordWrap.hidden = false;
+    el.recordWrap.scrollIntoView({ behavior: "smooth", block: "start" });
     L.phase = "record";
     recordBusy(true);
     gradeAndDealFinal();
@@ -1386,6 +1516,7 @@ ${T.finalText.slice(-6000) || "(nothing yet)"}`;
   el.finish.addEventListener("click", finishInterview);
   el.finish2.addEventListener("click", finishInterview);
   el.downloadRec.addEventListener("click", () => {
+    L.saved = true;
     const lines = [];
     lines.push("RIPPER - interview record");
     lines.push(new Date().toLocaleString());
@@ -1418,7 +1549,26 @@ ${T.finalText.slice(-6000) || "(nothing yet)"}`;
     "#employers": "Ripper - employers",
     "#ripper": "Ripper himself",
   };
+  // a live recruiter call, or a record not yet downloaded, asks before anything takes it away
+  function atStake() {
+    if (M.mode !== "interview") return "";
+    if (L.phase === "pool" || L.phase === "serving")
+      return T.listening ? "Leave this interview? Ripper stops listening, and this interview's questions and notes go with it."
+                         : "Leave this interview? Its questions and notes go with it.";
+    if (L.phase === "record" && !L.saved) return "Leave this interview's record? You haven't downloaded it, and it won't be here when you come back.";
+    return "";
+  }
+  let settled = location.hash;  // where the router last landed
   function route(scroll) {
+    const leaving = settled === "#recruiters" && location.hash !== "#recruiters";
+    const reTap = settled === "#recruiters" && location.hash === "#recruiters" && L.phase === "record";  // R on the record screen starts over
+    const msg = (leaving || reTap) ? atStake() : "";
+    if (msg) {
+      if (!confirm(msg)) { if (leaving) history.replaceState(null, "", "#recruiters"); return; }  // stay put: nothing else moves
+      if (T.listening) stopListening();
+      L.phase = "idle"; setMode("interview");  // OK: end the call the dialog just said would end
+    }
+    settled = location.hash;
     const h = (location.hash in VIEWMAP) ? location.hash : "";
     const target = h ? VIEWMAP[h] : "home";
     document.querySelectorAll(".view").forEach(v => v.classList.toggle("active", v.id === target));
@@ -1429,6 +1579,7 @@ ${T.finalText.slice(-6000) || "(nothing yet)"}`;
   }
   window.ripperRoute = route;
   window.addEventListener("hashchange", () => route(true));
+  window.addEventListener("beforeunload", e => { if (atStake()) { e.preventDefault(); e.returnValue = ""; } });  // reload or close asks too
   route(location.hash !== "");
 })();
 </script>
